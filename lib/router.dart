@@ -6,6 +6,7 @@ import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
 import 'features/get_app/get_app_page.dart';
 import 'features/placeholder/coming_soon_page.dart';
+import 'features/profile/profile_page.dart';
 import 'features/wallet/wallet_page.dart';
 import 'platform/device_check.dart';
 import 'shell/app_shell.dart';
@@ -52,14 +53,8 @@ final appRouter = GoRouter(
           ),
         ),
         GoRoute(
-          path: '/profile',
-          pageBuilder: (_, _) => const NoTransitionPage(
-            child: ComingSoonPage(
-              title: 'Profile',
-              icon: Icons.account_circle_outlined,
-              message: 'The Profile screen will be built from your next UI.',
-            ),
-          ),
+          path: ProfilePage.routePath,
+          pageBuilder: (_, _) => const NoTransitionPage(child: ProfilePage()),
         ),
       ],
     ),

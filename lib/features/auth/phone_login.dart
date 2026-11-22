@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../data/demo_data.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/brand_logo.dart';
+import '../../widgets/flag_image.dart';
 
 /// "Log in with Phone Number" fallback, shown inside the sign-in card.
 /// Mirrors the mobile phone_login (country picker + number, Get OTP) and
@@ -219,7 +220,7 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
                 ),
                 child: Row(
                   children: [
-                    _Flag(code: _country.code),
+                    FlagImage(code: _country.code),
                     const SizedBox(width: 8),
                     Text(
                       _country.dial,
@@ -560,35 +561,6 @@ class _FeatureChips extends StatelessWidget {
   }
 }
 
-class _Flag extends StatelessWidget {
-  const _Flag({required this.code});
-
-  final String code;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: Image.network(
-        'https://flagcdn.com/w40/$code.png',
-        width: 26,
-        height: 18,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => Container(
-          width: 26,
-          height: 18,
-          alignment: Alignment.center,
-          color: AppColors.accentSoft,
-          child: Text(
-            code.toUpperCase(),
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// Country list (the mobile app's ListOfCountries dialog). Real data comes
 /// from the supported_countries table in the backend phase.
 class _CountryDialog extends StatefulWidget {
@@ -673,7 +645,7 @@ class _CountryDialogState extends State<_CountryDialog> {
                     ),
                     selected: on,
                     selectedTileColor: AppColors.lavenderSoft,
-                    leading: _Flag(code: c.code),
+                    leading: FlagImage(code: c.code),
                     title: Text(c.name),
                     trailing: Text(
                       c.dial,
