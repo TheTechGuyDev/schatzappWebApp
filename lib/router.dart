@@ -4,15 +4,27 @@ import 'package:material_ui/material_ui.dart';
 import 'features/auth/sign_in_page.dart';
 import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
+import 'features/get_app/get_app_page.dart';
 import 'features/placeholder/coming_soon_page.dart';
+import 'platform/device_check.dart';
 import 'shell/app_shell.dart';
 
-/// App routes. The session redirect (signed out -> /login) is added when the
-/// QR sign-in backend is wired. Until then every route is reachable so the
-/// UI can be reviewed on the preview link.
+/// App routes. Phones always land on the "Get the app" page: SchatzApp Web
+/// is for computers and tablets only. The session redirect (signed out ->
+/// /login) is added when the QR sign-in backend is wired.
 final appRouter = GoRouter(
-  initialLocation: SignInPage.routePath,
+  initialLocation: isPhoneDevice ? GetAppPage.routePath : SignInPage.routePath,
+  redirect: (_, state) {
+    final onGetApp = state.uri.path == GetAppPage.routePath;
+    if (isPhoneDevice && !onGetApp) return GetAppPage.routePath;
+    if (!isPhoneDevice && onGetApp) return SignInPage.routePath;
+    return null;
+  },
   routes: [
+    GoRoute(
+      path: GetAppPage.routePath,
+      builder: (_, _) => const GetAppPage(),
+    ),
     GoRoute(path: '/', redirect: (_, _) => SignInPage.routePath),
     GoRoute(
       path: SignInPage.routePath,
