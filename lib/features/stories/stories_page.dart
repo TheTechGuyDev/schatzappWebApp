@@ -439,146 +439,414 @@ class _StoryRow extends StatelessWidget {
 // For You
 // ---------------------------------------------------------------------------
 
-class _ForYou extends StatelessWidget {
+class _ForYou extends StatefulWidget {
   const _ForYou({required this.feed});
 
   final List<(DemoStory, int)> feed;
 
   @override
+  State<_ForYou> createState() => _ForYouState();
+}
+
+class _ForYouState extends State<_ForYou> {
+  String _q = '';
+  final Set<int> _hidden = {};
+
+  @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: [
-        const SliverPadding(
-          padding: EdgeInsets.fromLTRB(28, 22, 28, 6),
-          sliver: SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'For You',
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.heading,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Stories picked for you. Refreshed every time you open it.',
-                  style: TextStyle(fontSize: 15, color: AppColors.meta),
-                ),
-              ],
+    final items = [
+      for (var i = 0; i < widget.feed.length; i++)
+        if (!_hidden.contains(i) &&
+            (_q.isEmpty || widget.feed[i].$1.name.toLowerCase().contains(_q)))
+          i,
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 22, 16, 24),
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            'Stories',
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.w700,
+              color: AppColors.heading,
             ),
           ),
         ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(28, 14, 28, 24),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 200,
-              mainAxisSpacing: 14,
-              crossAxisSpacing: 14,
-              childAspectRatio: 9 / 16,
-            ),
-            delegate: SliverChildBuilderDelegate((context, i) {
-              final (story, index) = feed[i];
-              return _FeedCard(
-                story: story,
-                item: story.items[index],
-                onTap: () => showStoryViewer(
-                  context,
-                  stories: [
-                    DemoStory(
-                      name: story.name,
-                      time: story.time,
-                      color: story.color,
-                      items: [story.items[index]],
-                    ),
-                  ],
+        const SizedBox(height: 18),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: TextField(
+            onChanged: (v) => setState(() => _q = v.trim().toLowerCase()),
+            decoration: InputDecoration(
+              hintText: 'Search friends',
+              hintStyle: const TextStyle(color: AppColors.meta),
+              prefixIcon: const Icon(Icons.search, color: AppColors.heading),
+              filled: true,
+              fillColor: const Color(0xFFF8F6FC),
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(30),
+                borderSide: const BorderSide(color: Color(0xFFD5D1DE)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(30),
+                borderSide: const BorderSide(
+                  color: AppColors.accent,
+                  width: 1.4,
                 ),
-              );
-            }, childCount: feed.length),
+              ),
+            ),
           ),
         ),
+        const SizedBox(height: 16),
+        if (items.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(40),
+            child: Center(
+              child: Text(
+                'No Stories to show right now',
+                style: TextStyle(color: AppColors.meta),
+              ),
+            ),
+          ),
+        for (final i in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: _FeedPost(
+              key: ValueKey('post-$i'),
+              story: widget.feed[i].$1,
+              item: widget.feed[i].$1.items[widget.feed[i].$2],
+              seed: i,
+              onHide: () => setState(() => _hidden.add(i)),
+            ),
+          ),
       ],
     );
   }
 }
 
-class _FeedCard extends StatelessWidget {
-  const _FeedCard({
+/// One For You post (mobile For You card): header, story, reactions, Share.
+class _FeedPost extends StatefulWidget {
+  const _FeedPost({
+    super.key,
     required this.story,
     required this.item,
-    required this.onTap,
+    required this.seed,
+    required this.onHide,
   });
 
   final DemoStory story;
   final StoryItem item;
+  final int seed;
+  final VoidCallback onHide;
+
+  @override
+  State<_FeedPost> createState() => _FeedPostState();
+}
+
+class _FeedPostState extends State<_FeedPost> {
+  // Reaction counts: heart, call-me hand, laughing (same set as mobile).
+  late final List<int> _counts = [
+    (widget.seed * 3 + 1) % 5,
+    (widget.seed * 2) % 3,
+    widget.seed % 2,
+  ];
+  int? _mine;
+
+  void _react(int r) => setState(() {
+    if (_mine == r) {
+      _counts[r]--;
+      _mine = null;
+    } else {
+      if (_mine != null) _counts[_mine!]--;
+      _counts[r]++;
+      _mine = r;
+    }
+  });
+
+  void _toast(String msg) => ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(msg)));
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.story;
+    final item = widget.item;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.brandDeep.withValues(alpha: 0.05),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 4, 8),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(2.5),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.accent, width: 2),
+                  ),
+                  child: Avatar(name: s.name, color: s.color, size: 54),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.name,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.heading,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        s.time,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: AppColors.meta,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'More',
+                  icon: const Icon(Icons.more_vert, color: AppColors.body),
+                  onSelected: (v) {
+                    if (v == 'Hide') {
+                      widget.onHide();
+                      _toast('Story hidden');
+                    } else {
+                      _toast('$v is coming soon.');
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'Get notification',
+                      child: Text('Get notification'),
+                    ),
+                    PopupMenuItem(value: 'Repost', child: Text('Repost')),
+                    PopupMenuItem(value: 'Save', child: Text('Save')),
+                    PopupMenuItem(value: 'Hide', child: Text('Hide')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Story content (click to open full screen)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => showStoryViewer(
+                context,
+                stories: [
+                  DemoStory(
+                    name: s.name,
+                    time: s.time,
+                    color: s.color,
+                    items: [item],
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: SizedBox(
+                  height: 300,
+                  child: item.kind == StoryKind.text
+                      ? Container(
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                item.background,
+                                Color.lerp(
+                                  item.background,
+                                  Colors.white,
+                                  0.45,
+                                )!,
+                              ],
+                            ),
+                          ),
+                          child: Text(
+                            item.text,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 34,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      : Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CustomPaint(painter: SunsetPainter()),
+                            if (item.caption.isNotEmpty)
+                              Positioned(
+                                left: 16,
+                                right: 16,
+                                bottom: 16,
+                                child: Text(
+                                  item.caption,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                    shadows: [
+                                      Shadow(
+                                        color: Colors.black54,
+                                        blurRadius: 6,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+          ),
+
+          // Reactions + Share
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+            child: Row(
+              children: [
+                _ReactionButton(
+                  icon: Icon(
+                    _mine == 0 ? Icons.favorite : Icons.favorite_border,
+                    color: const Color(0xFFE91E4D),
+                    size: 28,
+                  ),
+                  count: _counts[0],
+                  active: _mine == 0,
+                  activeColor: const Color(0xFFE91E4D),
+                  onTap: () => _react(0),
+                ),
+                _ReactionButton(
+                  icon: const Text('🤙', style: TextStyle(fontSize: 24)),
+                  count: _counts[1],
+                  active: _mine == 1,
+                  onTap: () => _react(1),
+                ),
+                _ReactionButton(
+                  icon: const Text('😂', style: TextStyle(fontSize: 24)),
+                  count: _counts[2],
+                  active: _mine == 2,
+                  onTap: () => _react(2),
+                ),
+                const Spacer(),
+                Material(
+                  color: const Color(0xFFF1EEF6),
+                  borderRadius: BorderRadius.circular(24),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(24),
+                    onTap: () => _toast('Share is coming soon.'),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.reply,
+                            textDirection: TextDirection.rtl,
+                            color: AppColors.body,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Share',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.body,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReactionButton extends StatelessWidget {
+  const _ReactionButton({
+    required this.icon,
+    required this.count,
+    required this.active,
+    required this.onTap,
+    this.activeColor = AppColors.accent,
+  });
+
+  final Widget icon;
+  final int count;
+  final bool active;
+  final Color activeColor;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (item.kind == StoryKind.text)
-              Container(
-                color: item.background,
-                padding: const EdgeInsets.all(14),
-                alignment: Alignment.center,
-                child: Text(
-                  item.text,
-                  textAlign: TextAlign.center,
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              )
-            else
-              CustomPaint(painter: SunsetPainter()),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(10, 24, 10, 10),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black54],
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Avatar(name: story.name, color: story.color, size: 28),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        story.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
+    return Padding(
+      padding: const EdgeInsets.only(right: 18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: active
+                ? activeColor.withValues(alpha: 0.1)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            children: [
+              icon,
+              const SizedBox(width: 8),
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: active ? activeColor : AppColors.body,
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

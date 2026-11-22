@@ -554,6 +554,7 @@ const demoStories = <DemoStory>[
     time: '1h ago',
     color: Color(0xFF8A6A55),
     items: [
+      StoryItem.text('hey', Color(0xFF0A84FF)),
       StoryItem.photo(caption: 'Evening by the lake'),
       StoryItem.text('Grateful for today', Color(0xFF7A2BE8)),
     ],
