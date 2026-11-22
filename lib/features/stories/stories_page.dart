@@ -27,6 +27,31 @@ class _StoriesPageState extends State<StoriesPage> {
   final List<StoryItem> _myItems = [];
   late List<(DemoStory, int)> _feed = _shuffleFeed();
 
+  /// Story playing in the right-hand panel (Simplified, desktop).
+  List<DemoStory>? _playList;
+  int _playIndex = 0;
+  bool _playMine = false;
+  int _playKey = 0;
+
+  String? get _activeName => _playList == null
+      ? null
+      : (_playMine ? 'My Stories' : _playList![_playIndex].name);
+
+  void _play(List<DemoStory> list, int index, {bool mine = false}) {
+    if (screenSizeOf(context) != ScreenSize.desktop) {
+      showStoryViewer(context, stories: list, startIndex: index, isMine: mine);
+      return;
+    }
+    setState(() {
+      _playList = list;
+      _playIndex = index;
+      _playMine = mine;
+      _playKey++;
+    });
+  }
+
+  void _stop() => setState(() => _playList = null);
+
   /// For You: every story item on its own, shuffled each time it opens.
   List<(DemoStory, int)> _shuffleFeed() {
     final all = [
@@ -58,6 +83,7 @@ class _StoriesPageState extends State<StoriesPage> {
       selected: _tab,
       onSelect: (t) => setState(() {
         _tab = t;
+        _playList = null;
         if (t == _Tab.forYou) _feed = _shuffleFeed();
       }),
     );
@@ -66,9 +92,10 @@ class _StoriesPageState extends State<StoriesPage> {
         query: _q,
         myItems: _myItems,
         onSearch: (v) => setState(() => _q = v.trim().toLowerCase()),
-        onMyStory: () => _myItems.isEmpty
-            ? _addStory()
-            : showStoryViewer(context, stories: [_myStory], isMine: true),
+        activeName: _activeName,
+        onOpen: (s) => _play(demoStories, demoStories.indexOf(s)),
+        onMyStory: () =>
+            _myItems.isEmpty ? _addStory() : _play([_myStory], 0, mine: true),
         onAddStory: _addStory,
       ),
       _Tab.forYou => _ForYou(feed: _feed),
@@ -98,6 +125,37 @@ class _StoriesPageState extends State<StoriesPage> {
           ),
           const SizedBox(width: 12),
           Expanded(child: ShellPanel(child: body)),
+          if (_playList != null && _tab == _Tab.simplified) ...[
+            const SizedBox(width: 12),
+            LayoutBuilder(
+              builder: (context, c) {
+                // Phone-like 9:16 card that fits the panel height.
+                final w = (c.maxHeight * 9 / 16).clamp(300.0, 400.0);
+                return Container(
+                  width: w,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white, width: 4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.brandDeep.withValues(alpha: 0.18),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: StoryPlayer(
+                    key: ValueKey('player-$_playKey'),
+                    stories: _playList!,
+                    startIndex: _playIndex,
+                    isMine: _playMine,
+                    onClose: _stop,
+                    onPersonChanged: (i) => setState(() => _playIndex = i),
+                  ),
+                );
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -198,13 +256,17 @@ class _Simplified extends StatelessWidget {
   const _Simplified({
     required this.query,
     required this.myItems,
+    required this.activeName,
     required this.onSearch,
+    required this.onOpen,
     required this.onMyStory,
     required this.onAddStory,
   });
 
   final String query;
   final List<StoryItem> myItems;
+  final String? activeName;
+  final ValueChanged<DemoStory> onOpen;
   final ValueChanged<String> onSearch;
   final VoidCallback onMyStory;
   final VoidCallback onAddStory;
@@ -217,11 +279,7 @@ class _Simplified extends StatelessWidget {
     final recent = list.where((s) => !s.viewed).toList();
     final viewed = list.where((s) => s.viewed).toList();
 
-    void open(DemoStory s) => showStoryViewer(
-      context,
-      stories: demoStories,
-      startIndex: demoStories.indexOf(s),
-    );
+    void open(DemoStory s) => onOpen(s);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(28, 22, 28, 24),
@@ -260,6 +318,7 @@ class _Simplified extends StatelessWidget {
               ? 'Tap to add a story'
               : '${myItems.length} ${myItems.length == 1 ? 'story' : 'stories'} · Just now',
           ring: myItems.isNotEmpty,
+          active: activeName == 'My Stories',
           avatar: const Avatar(name: demoCurrentUserName, size: 72),
           badge: true,
           onTap: onMyStory,
@@ -273,6 +332,7 @@ class _Simplified extends StatelessWidget {
               name: s.name,
               subtitle: s.time,
               ring: true,
+              active: activeName == s.name,
               avatar: Avatar(name: s.name, color: s.color, size: 72),
               chevron: true,
               onTap: () => open(s),
@@ -286,6 +346,7 @@ class _Simplified extends StatelessWidget {
               name: s.name,
               subtitle: s.time,
               ring: false,
+              active: activeName == s.name,
               avatar: Avatar(name: s.name, color: s.color, size: 72),
               chevron: true,
               onTap: () => open(s),
@@ -336,8 +397,11 @@ class _StoryRow extends StatelessWidget {
     required this.onTap,
     this.badge = false,
     this.chevron = false,
+    this.active = false,
     this.onBadge,
   });
+
+  final bool active;
 
   final String name;
   final String subtitle;
@@ -350,85 +414,92 @@ class _StoryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return Material(
+      color: active ? const Color(0xFFF1E6FE) : Colors.transparent,
       borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 84,
-              height: 84,
-              child: Stack(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: ring
-                            ? AppColors.accent
-                            : const Color(0xFFD5D1DE),
-                        width: 2.5,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 84,
+                height: 84,
+                child: Stack(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: ring
+                              ? AppColors.accent
+                              : const Color(0xFFD5D1DE),
+                          width: 2.5,
+                        ),
                       ),
+                      child: avatar,
                     ),
-                    child: avatar,
-                  ),
-                  if (badge)
-                    Positioned(
-                      right: 0,
-                      bottom: 2,
-                      child: InkWell(
-                        customBorder: const CircleBorder(),
-                        onTap: onBadge,
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: AppColors.accentDark,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          child: const Icon(
-                            Icons.add,
-                            color: Colors.white,
-                            size: 18,
+                    if (badge)
+                      Positioned(
+                        right: 0,
+                        bottom: 2,
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: onBadge,
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: AppColors.accentDark,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: const Icon(
+                              Icons.add,
+                              color: Colors.white,
+                              size: 18,
+                            ),
                           ),
                         ),
                       ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.heading,
+                      ),
                     ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 20),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.heading,
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: AppColors.meta,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 16, color: AppColors.meta),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            if (chevron)
-              const Icon(
-                Icons.chevron_right,
-                color: AppColors.heading,
-                size: 28,
-              ),
-          ],
+              if (chevron)
+                const Icon(
+                  Icons.chevron_right,
+                  color: AppColors.heading,
+                  size: 28,
+                ),
+            ],
+          ),
         ),
       ),
     );
