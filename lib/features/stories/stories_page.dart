@@ -4,6 +4,7 @@ import '../../data/demo_data.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/nav_icons.dart';
 import '../../widgets/sunset_painter.dart';
 import 'story_viewer.dart';
 
@@ -217,13 +218,21 @@ class _StoriesMenu extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        m.$2,
-                        color: selected == m.$1
-                            ? AppColors.accent
-                            : AppColors.heading,
-                        size: 26,
-                      ),
+                      m.$1 == _Tab.simplified
+                          ? NavIcon(
+                              NavIconKind.stories,
+                              color: selected == m.$1
+                                  ? AppColors.accent
+                                  : AppColors.heading,
+                              size: 26,
+                            )
+                          : Icon(
+                              m.$2,
+                              color: selected == m.$1
+                                  ? AppColors.accent
+                                  : AppColors.heading,
+                              size: 26,
+                            ),
                       const SizedBox(width: 14),
                       Text(
                         m.$3,

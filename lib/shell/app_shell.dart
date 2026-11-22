@@ -5,6 +5,7 @@ import '../data/demo_data.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/brand_logo.dart';
+import '../widgets/nav_icons.dart';
 
 /// Screen size classes used across the signed-in app.
 enum ScreenSize { phone, tablet, desktop }
@@ -17,49 +18,20 @@ ScreenSize screenSizeOf(BuildContext context) {
 }
 
 class _NavItem {
-  const _NavItem(
-    this.path,
-    this.label,
-    this.icon,
-    this.activeIcon, [
-    this.badge = 0,
-  ]);
+  const _NavItem(this.path, this.label, this.kind, [this.badge = 0]);
 
   final String path;
   final String label;
-  final IconData icon;
-  final IconData activeIcon;
+  final NavIconKind kind;
   final int badge;
 }
 
 const _navItems = [
-  _NavItem(
-    '/chats',
-    'Chats',
-    Icons.chat_bubble_outline_rounded,
-    Icons.chat_bubble_outline_rounded,
-    1,
-  ),
-  _NavItem('/calls', 'Calls', Icons.call_outlined, Icons.call),
-  _NavItem(
-    '/wallets',
-    'Wallets',
-    Icons.account_balance_wallet_outlined,
-    Icons.account_balance_wallet_outlined,
-  ),
-  _NavItem(
-    '/stories',
-    'Stories',
-    Icons.motion_photos_on_outlined,
-    Icons.motion_photos_on_outlined,
-  ),
-  _NavItem(
-    '/profile',
-    'Profile',
-    Icons.account_circle_outlined,
-    Icons.account_circle_outlined,
-    1,
-  ),
+  _NavItem('/chats', 'Chats', NavIconKind.chats, 1),
+  _NavItem('/calls', 'Calls', NavIconKind.calls),
+  _NavItem('/wallets', 'Wallets', NavIconKind.wallets),
+  _NavItem('/stories', 'Stories', NavIconKind.stories),
+  _NavItem('/profile', 'Profile', NavIconKind.profile, 1),
 ];
 
 /// Signed-in layout: left nav rail on desktop (collapsible) and tablet
@@ -103,13 +75,18 @@ class _AppShellState extends State<AppShell> {
                   isLabelVisible: n.badge > 0,
                   label: Text('${n.badge}'),
                   backgroundColor: AppColors.accent,
-                  child: Icon(n.icon, color: AppColors.body),
+                  child: NavIcon(n.kind, color: AppColors.body, size: 24),
                 ),
                 selectedIcon: Badge(
                   isLabelVisible: n.badge > 0,
                   label: Text('${n.badge}'),
                   backgroundColor: AppColors.accent,
-                  child: Icon(n.activeIcon, color: AppColors.accent),
+                  child: NavIcon(
+                    n.kind,
+                    color: AppColors.accent,
+                    size: 24,
+                    active: true,
+                  ),
                 ),
                 label: n.label,
               ),
@@ -174,7 +151,7 @@ class _Rail extends StatelessWidget {
                     : MainAxisAlignment.start,
                 children: [
                   if (collapsed)
-                    const SMark(size: 38)
+                    const SMark(size: 42)
                   else ...[
                     const SizedBox(width: 2),
                     const _GradientWordmark(),
@@ -254,7 +231,7 @@ class _GradientWordmark extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SMark(size: 40),
+        const SMark(size: 44),
         const SizedBox(width: 6),
         ShaderMask(
           shaderCallback: (r) => const LinearGradient(
@@ -289,9 +266,10 @@ class _RailItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = active ? AppColors.accent : AppColors.heading;
-    final icon = Icon(
-      active ? item.activeIcon : item.icon,
-      color: active ? AppColors.accent : AppColors.body,
+    final icon = NavIcon(
+      item.kind,
+      color: active ? AppColors.accent : AppColors.heading,
+      active: active,
       size: 26,
     );
     final tile = Material(

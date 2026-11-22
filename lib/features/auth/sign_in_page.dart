@@ -45,12 +45,7 @@ class _SignInPageState extends State<SignInPage> {
                   constraints: BoxConstraints(minHeight: c.maxHeight),
                   child: Column(
                     children: [
-                      _TopBar(
-                        compact: w < 1000,
-                        tiny: w < 560,
-                        onSignIn: () {},
-                        onGetStarted: () => _comingSoon('Sign up on web'),
-                      ),
+                      _TopBar(compact: w < 1000),
                       Padding(
                         padding: EdgeInsets.fromLTRB(
                           compact ? 16 : 40,
@@ -96,17 +91,9 @@ class _SignInPageState extends State<SignInPage> {
 // ---------------------------------------------------------------------------
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.compact,
-    required this.tiny,
-    required this.onSignIn,
-    required this.onGetStarted,
-  });
+  const _TopBar({required this.compact});
 
   final bool compact;
-  final bool tiny;
-  final VoidCallback onSignIn;
-  final VoidCallback onGetStarted;
 
   @override
   Widget build(BuildContext context) {
@@ -142,65 +129,7 @@ class _TopBar extends StatelessWidget {
                     child: Text(l, style: linkStyle),
                   ),
               if (!compact) const Spacer(),
-              if (!tiny) ...[
-                _PillButton(
-                  label: 'Sign In',
-                  outlined: true,
-                  onTap: onSignIn,
-                  width: compact ? 96 : 124,
-                ),
-                const SizedBox(width: 14),
-              ],
-              _PillButton(
-                label: 'Get Started',
-                onTap: onGetStarted,
-                width: compact ? 120 : 154,
-              ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PillButton extends StatelessWidget {
-  const _PillButton({
-    required this.label,
-    required this.onTap,
-    required this.width,
-    this.outlined = false,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-  final double width;
-  final bool outlined;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      height: 46,
-      child: Material(
-        color: outlined ? Colors.white : AppColors.brandDeep,
-        shape: StadiumBorder(
-          side: outlined
-              ? const BorderSide(color: AppColors.brandDeep, width: 1.4)
-              : BorderSide.none,
-        ),
-        child: InkWell(
-          customBorder: const StadiumBorder(),
-          onTap: onTap,
-          child: Center(
-            child: Text(
-              label,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: outlined ? AppColors.brandDeep : Colors.white,
-              ),
-            ),
           ),
         ),
       ),
@@ -483,7 +412,7 @@ class _QrBox extends StatelessWidget {
           color: Color(0xFF0E0B1A),
         ),
         embeddedImage: const AssetImage('assets/images/s_logo.png'),
-        embeddedImageStyle: const QrEmbeddedImageStyle(size: Size(52, 58)),
+        embeddedImageStyle: const QrEmbeddedImageStyle(size: Size(50, 58)),
       ),
     );
   }
