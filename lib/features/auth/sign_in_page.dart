@@ -1,9 +1,11 @@
-import 'package:go_router/go_router.dart';
+import 'dart:async';
+
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:web/web.dart' as web;
 
+import '../../auth/web_auth.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/brand_logo.dart';
 import 'phone_login.dart';
@@ -47,6 +49,40 @@ class _SignInPageState extends State<SignInPage> {
                   child: Column(
                     children: [
                       _TopBar(compact: w < 1000),
+                      if (WebAuth.instance.logoutReason != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF4E5),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: const Color(0xFFFFD8A8),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.info_outline,
+                                  color: Color(0xFFB25E00),
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  WebAuth.instance.logoutReason!,
+                                  style: const TextStyle(
+                                    color: Color(0xFF7A4100),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(
                           compact ? 16 : 40,
@@ -68,7 +104,7 @@ class _SignInPageState extends State<SignInPage> {
                                 setState(() => _phoneMode = true),
                             onBackToQr: () =>
                                 setState(() => _phoneMode = false),
-                            onSignedIn: () => context.go('/chats'),
+                            onSignedIn: () => WebAuth.instance.enterDemo(),
                           ),
                         ),
                       ),
@@ -326,7 +362,7 @@ class _SignInContent extends StatelessWidget {
     final qrColumn = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const _QrBox(data: 'schatzapp://link-device?session=preview'),
+        _LiveQr(keepSignedIn: keepSignedIn),
         const SizedBox(height: 22),
         _KeepSignedIn(value: keepSignedIn, onChanged: onKeepSignedIn),
         const SizedBox(height: 14),
@@ -393,6 +429,208 @@ class _SignInContent extends StatelessWidget {
           const SizedBox(height: 18),
           _PhoneButton(onTap: onPhoneLogin),
         ],
+      ),
+    );
+  }
+}
+
+/// Live QR code: requests a fresh code from the server, polls every 2
+/// seconds for the phone's answer, refreshes automatically when it expires
+/// and stops after a few refreshes (click to reload), like WhatsApp Web.
+class _LiveQr extends StatefulWidget {
+  const _LiveQr({required this.keepSignedIn});
+
+  final bool keepSignedIn;
+
+  @override
+  State<_LiveQr> createState() => _LiveQrState();
+}
+
+enum _QrState { loading, ready, reload, error, approving, rejected, limit }
+
+class _LiveQrState extends State<_LiveQr> {
+  static const _maxAutoRefresh = 5;
+
+  _QrState _state = _QrState.loading;
+  QrRequest? _req;
+  Timer? _poll;
+  int _refreshes = 0;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LiveQr old) {
+    super.didUpdateWidget(old);
+    // The keep-signed-in choice is stored with the QR request.
+    if (old.keepSignedIn != widget.keepSignedIn) {
+      _refreshes = 0;
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    _poll?.cancel();
+    setState(() => _state = _QrState.loading);
+    try {
+      final r = await WebAuth.instance.createQr(
+        keepSignedIn: widget.keepSignedIn,
+      );
+      if (!mounted) return;
+      setState(() {
+        _req = r;
+        _state = _QrState.ready;
+      });
+      _poll = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
+    } catch (_) {
+      if (mounted) setState(() => _state = _QrState.error);
+    }
+  }
+
+  Future<void> _tick() async {
+    final r = _req;
+    if (r == null || _busy || !mounted) return;
+    _busy = true;
+    try {
+      final expired = DateTime.now().isAfter(r.expiresAt);
+      final status = await WebAuth.instance.poll(r);
+      if (!mounted) return;
+      switch (status) {
+        case 'approved':
+          _poll?.cancel();
+          setState(() => _state = _QrState.approving);
+        case 'rejected':
+          _poll?.cancel();
+          setState(() => _state = _QrState.rejected);
+        case 'device_limit':
+          _poll?.cancel();
+          setState(() => _state = _QrState.limit);
+        case 'expired':
+        case 'used':
+          _expired();
+        default:
+          if (expired) _expired();
+      }
+    } catch (_) {
+      // Network hiccup: keep polling.
+    } finally {
+      _busy = false;
+    }
+  }
+
+  void _expired() {
+    _poll?.cancel();
+    if (_refreshes < _maxAutoRefresh) {
+      _refreshes++;
+      _load();
+    } else {
+      setState(() => _state = _QrState.reload);
+    }
+  }
+
+  void _reload() {
+    _refreshes = 0;
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = _req;
+    Widget? overlay;
+    switch (_state) {
+      case _QrState.loading:
+        overlay = const CircularProgressIndicator(color: AppColors.brandDeep);
+      case _QrState.ready:
+        overlay = null;
+      case _QrState.approving:
+        overlay = const _QrMessage(
+          icon: Icons.check_circle,
+          text: 'Approved on your phone.\nSigning you in...',
+        );
+      case _QrState.reload:
+        overlay = _QrMessage(
+          icon: Icons.refresh,
+          text: 'QR code expired.\nClick to reload.',
+          onTap: _reload,
+        );
+      case _QrState.error:
+        overlay = _QrMessage(
+          icon: Icons.wifi_off,
+          text: "Couldn't load the QR code.\nCheck your internet and click to retry.",
+          onTap: _reload,
+        );
+      case _QrState.rejected:
+        overlay = _QrMessage(
+          icon: Icons.block,
+          text: 'Request declined on your phone.\nClick to get a new code.',
+          onTap: _reload,
+        );
+      case _QrState.limit:
+        overlay = _QrMessage(
+          icon: Icons.devices_other,
+          text:
+              'You already have 7 linked devices.\n'
+              'Remove a device on your phone first,\nthen click to retry.',
+          onTap: _reload,
+        );
+    }
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Opacity(
+          opacity: _state == _QrState.ready ? 1 : 0.12,
+          child: _QrBox(data: r?.qr ?? 'schatzapp://link-device'),
+        ),
+        ?overlay,
+      ],
+    );
+  }
+}
+
+class _QrMessage extends StatelessWidget {
+  const _QrMessage({required this.icon, required this.text, this.onTap});
+
+  final IconData icon;
+  final String text;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 28,
+              backgroundColor: AppColors.brandDeep,
+              child: Icon(icon, color: Colors.white, size: 28),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.heading,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

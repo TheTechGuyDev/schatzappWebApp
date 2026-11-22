@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../data/demo_data.dart';
+import '../auth/web_auth.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/brand_logo.dart';
@@ -360,7 +361,7 @@ class _UserTile extends StatelessWidget {
           tooltip: 'More',
           icon: const Icon(Icons.more_horiz, color: AppColors.body),
           onSelected: (v) {
-            if (v == 'logout') context.go('/login');
+            if (v == 'logout') WebAuth.instance.signOut();
           },
           itemBuilder: (_) => const [
             PopupMenuItem(value: 'logout', child: Text('Log out')),

@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import 'auth/web_auth.dart';
 import 'features/auth/sign_in_page.dart';
 import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
@@ -11,14 +12,19 @@ import 'platform/device_check.dart';
 import 'shell/app_shell.dart';
 
 /// App routes. Phones always land on the "Get the app" page: SchatzApp Web
-/// is for computers and tablets only. The session redirect (signed out ->
-/// /login) is added when the QR sign-in backend is wired.
+/// is for computers and tablets only. Signed-out visitors only see /login.
 final appRouter = GoRouter(
-  initialLocation: isPhoneDevice ? GetAppPage.routePath : SignInPage.routePath,
+  initialLocation: isPhoneDevice ? GetAppPage.routePath : '/chats',
+  refreshListenable: WebAuth.instance,
   redirect: (_, state) {
-    final onGetApp = state.uri.path == GetAppPage.routePath;
-    if (isPhoneDevice && !onGetApp) return GetAppPage.routePath;
-    if (!isPhoneDevice && onGetApp) return SignInPage.routePath;
+    final path = state.uri.path;
+    final onGetApp = path == GetAppPage.routePath;
+    if (isPhoneDevice) return onGetApp ? null : GetAppPage.routePath;
+    if (onGetApp) return SignInPage.routePath;
+    final onLogin = path == SignInPage.routePath;
+    final signedIn = WebAuth.instance.signedIn;
+    if (!signedIn && !onLogin) return SignInPage.routePath;
+    if (signedIn && (onLogin || path == '/')) return '/chats';
     return null;
   },
   routes: [
