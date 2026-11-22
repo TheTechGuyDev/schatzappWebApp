@@ -104,6 +104,7 @@ class _ChatsPageState extends State<ChatsPage> {
             key: ValueKey('info-${chat.id}'),
             chat: chat,
             onClose: () => setState(() => _infoOpen = false),
+            onMessage: () => setState(() => _infoOpen = false),
           )
         : null;
 
@@ -111,52 +112,40 @@ class _ChatsPageState extends State<ChatsPage> {
       return info ?? (chat == null ? list : conversation);
     }
 
-    final listWidth = size == ScreenSize.desktop ? 360.0 : 320.0;
+    final listWidth = size == ScreenSize.desktop ? 350.0 : 310.0;
+    const gap = 12.0;
     return Padding(
-      padding: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.fromLTRB(4, 14, 14, 14),
       child: LayoutBuilder(
         builder: (context, c) {
-          // Three columns when there is room; otherwise the info panel
-          // takes the conversation's place until it is closed.
-          final remaining = c.maxWidth - listWidth;
-          final infoWidth = remaining >= 900 ? 380.0 : 340.0;
-          final threeColumns = remaining >= infoWidth + 380;
+          // Three cards when there is room; otherwise the info panel takes
+          // the conversation's place until it is closed.
+          final remaining = c.maxWidth - listWidth - gap;
+          final infoWidth = remaining >= 900 ? 360.0 : 330.0;
+          final threeColumns = remaining >= infoWidth + gap + 380;
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(width: listWidth, child: _listContainer(list)),
+              SizedBox(
+                width: listWidth,
+                child: ShellPanel(child: list),
+              ),
+              const SizedBox(width: gap),
               if (info == null)
-                Expanded(child: conversation)
+                Expanded(child: ShellPanel(child: conversation))
               else if (threeColumns) ...[
-                Expanded(child: conversation),
-                Container(
+                Expanded(child: ShellPanel(child: conversation)),
+                const SizedBox(width: gap),
+                SizedBox(
                   width: infoWidth,
-                  decoration: const BoxDecoration(
-                    border: Border(left: BorderSide(color: AppColors.border)),
-                  ),
-                  child: info,
+                  child: ShellPanel(child: info),
                 ),
               ] else
-                Expanded(child: info),
+                Expanded(child: ShellPanel(child: info)),
             ],
           );
         },
       ),
-    );
-  }
-
-  Widget _listContainer(Widget list) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-        border: Border(right: BorderSide(color: AppColors.border)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: list,
     );
   }
 }

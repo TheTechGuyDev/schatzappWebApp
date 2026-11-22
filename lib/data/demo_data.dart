@@ -23,6 +23,10 @@ class DemoChat {
     this.about = 'Hey there! I am using SchatzApp.',
     this.members = const [],
     this.mediaCount = 0,
+    this.username = '',
+    this.links = const [],
+    this.groupsInCommon = 0,
+    this.mutualContacts = 0,
   });
 
   final String id;
@@ -48,6 +52,14 @@ class DemoChat {
   final List<String> members;
 
   final int mediaCount;
+
+  final String username;
+
+  /// Links shared in this chat: (title, url).
+  final List<(String, String)> links;
+
+  final int groupsInCommon;
+  final int mutualContacts;
 }
 
 enum MessageKind { text, image }
@@ -77,9 +89,17 @@ const demoChats = <DemoChat>[
     unread: 1,
     isOnline: true,
     avatarColor: Color(0xFF8A6A55),
-    phone: '+44 7700 900123',
-    about: 'Building wealth, one step at a time.',
-    mediaCount: 24,
+    phone: '+234 903 287 7996',
+    about: 'God has been faithful to me, and I can\'t lie at all',
+    mediaCount: 5,
+    username: 'kestawealth',
+    links: [
+      ('YouTube', 'https://www.youtube.com'),
+      ('Facebook', 'https://www.facebook.com'),
+      ('WhatsApp', 'https://whatsapp.com'),
+    ],
+    groupsInCommon: 8,
+    mutualContacts: 6,
   ),
   DemoChat(
     id: 'best',
@@ -91,6 +111,7 @@ const demoChats = <DemoChat>[
     about: 'Friends and good vibes only.',
     members: ['Mr Kesta Wealth', 'My Airtel Number', 'Temidayo WAM'],
     mediaCount: 12,
+    links: [('SchatzApp', 'https://schatzapp.com')],
   ),
   DemoChat(
     id: 'sdff',
