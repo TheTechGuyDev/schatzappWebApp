@@ -509,3 +509,68 @@ const demoCountries = <DemoCountry>[
   DemoCountry('France', 'fr', '+33'),
   DemoCountry('United Arab Emirates', 'ae', '+971'),
 ];
+
+// ---------------------------------------------------------------------------
+// Stories
+// ---------------------------------------------------------------------------
+
+enum StoryKind { photo, text }
+
+class StoryItem {
+  const StoryItem.photo({this.caption = ''})
+    : kind = StoryKind.photo,
+      text = '',
+      background = const Color(0xFF000000);
+
+  const StoryItem.text(this.text, this.background)
+    : kind = StoryKind.text,
+      caption = '';
+
+  final StoryKind kind;
+  final String text;
+  final String caption;
+  final Color background;
+}
+
+class DemoStory {
+  const DemoStory({
+    required this.name,
+    required this.time,
+    required this.items,
+    this.color,
+    this.viewed = false,
+  });
+
+  final String name;
+  final String time;
+  final List<StoryItem> items;
+  final Color? color;
+  final bool viewed;
+}
+
+const demoStories = <DemoStory>[
+  DemoStory(
+    name: 'Mr Kesta Wealth',
+    time: '1h ago',
+    color: Color(0xFF8A6A55),
+    items: [
+      StoryItem.photo(caption: 'Evening by the lake'),
+      StoryItem.text('Grateful for today', Color(0xFF7A2BE8)),
+    ],
+  ),
+  DemoStory(
+    name: 'Temidayo WAM',
+    time: '3h ago',
+    color: Color(0xFF3F7D4E),
+    items: [
+      StoryItem.text('Building something big. Stay tuned!', Color(0xFF0E8BAB)),
+    ],
+  ),
+  DemoStory(
+    name: 'Ada Okafor',
+    time: 'Yesterday',
+    color: Color(0xFFB4508A),
+    viewed: true,
+    items: [StoryItem.photo(caption: 'Weekend vibes')],
+  ),
+];

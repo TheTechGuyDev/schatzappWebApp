@@ -1,12 +1,11 @@
 import 'package:go_router/go_router.dart';
-import 'package:material_ui/material_ui.dart';
 
 import 'features/auth/sign_in_page.dart';
 import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
 import 'features/get_app/get_app_page.dart';
-import 'features/placeholder/coming_soon_page.dart';
 import 'features/profile/profile_page.dart';
+import 'features/stories/stories_page.dart';
 import 'features/wallet/wallet_page.dart';
 import 'platform/device_check.dart';
 import 'shell/app_shell.dart';
@@ -43,14 +42,8 @@ final appRouter = GoRouter(
           pageBuilder: (_, _) => const NoTransitionPage(child: WalletPage()),
         ),
         GoRoute(
-          path: '/stories',
-          pageBuilder: (_, _) => const NoTransitionPage(
-            child: ComingSoonPage(
-              title: 'Stories',
-              icon: Icons.motion_photos_on_outlined,
-              message: 'The Stories screen will be built from your next UI.',
-            ),
-          ),
+          path: StoriesPage.routePath,
+          pageBuilder: (_, _) => const NoTransitionPage(child: StoriesPage()),
         ),
         GoRoute(
           path: ProfilePage.routePath,
