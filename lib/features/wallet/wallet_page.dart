@@ -1,4 +1,3 @@
-import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../data/demo_data.dart';
@@ -8,8 +7,8 @@ import '../../widgets/avatar.dart';
 import '../../widgets/brand_logo.dart';
 
 /// Wallets tab (Wallet UI image). Placeholder data until the backend phase.
-/// Every wallet action is locked behind the user's 6-digit wallet PIN
-/// (same PIN as the mobile app).
+/// Wallet actions are mobile-only: tapping one shows a "mobile app only"
+/// notice. The web shows balance and recent transactions.
 class WalletPage extends StatefulWidget {
   const WalletPage({super.key});
 
@@ -43,21 +42,12 @@ const _moreActions = [
 
 class _WalletPageState extends State<WalletPage> {
   bool _hidden = false;
-  bool _unlocked = false;
 
-  Future<void> _onAction(_WalletAction a) async {
-    if (!_unlocked) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => const _PinDialog(),
-      );
-      if (ok != true || !mounted) return;
-      setState(() => _unlocked = true);
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('${a.title} is coming soon.')));
+  void _onAction(_WalletAction a) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _MobileOnlyDialog(action: a.title),
+    );
   }
 
   void _openTx(DemoTransaction t) {
@@ -70,7 +60,7 @@ class _WalletPageState extends State<WalletPage> {
   @override
   Widget build(BuildContext context) {
     final size = screenSizeOf(context);
-    final actions = _ActionsPanel(unlocked: _unlocked, onTap: _onAction);
+    final actions = _ActionsPanel(onTap: _onAction);
     final main = _WalletMain(
       hidden: _hidden,
       onToggleHidden: () => setState(() => _hidden = !_hidden),
@@ -113,9 +103,8 @@ class _WalletPageState extends State<WalletPage> {
 // ---------------------------------------------------------------------------
 
 class _ActionsPanel extends StatelessWidget {
-  const _ActionsPanel({required this.unlocked, required this.onTap});
+  const _ActionsPanel({required this.onTap});
 
-  final bool unlocked;
   final ValueChanged<_WalletAction> onTap;
 
   @override
@@ -135,12 +124,7 @@ class _ActionsPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           for (final a in _topActions) ...[
-            _ActionTile(
-              action: a,
-              unlocked: unlocked,
-              onTap: () => onTap(a),
-              boxed: true,
-            ),
+            _ActionTile(action: a, onTap: () => onTap(a), boxed: true),
             const SizedBox(height: 14),
           ],
           const Divider(height: 18, color: AppColors.border),
@@ -155,7 +139,6 @@ class _ActionsPanel extends StatelessWidget {
                 for (var i = 0; i < _moreActions.length; i++)
                   _ActionTile(
                     action: _moreActions[i],
-                    unlocked: unlocked,
                     onTap: () => onTap(_moreActions[i]),
                     divider: i < _moreActions.length - 1,
                   ),
@@ -171,14 +154,12 @@ class _ActionsPanel extends StatelessWidget {
 class _ActionTile extends StatelessWidget {
   const _ActionTile({
     required this.action,
-    required this.unlocked,
     required this.onTap,
     this.boxed = false,
     this.divider = false,
   });
 
   final _WalletAction action;
-  final bool unlocked;
   final VoidCallback onTap;
   final bool boxed;
   final bool divider;
@@ -222,9 +203,9 @@ class _ActionTile extends StatelessWidget {
               ),
             ),
           ),
-          Icon(
-            unlocked ? Icons.lock_open_rounded : Icons.lock_outline_rounded,
-            color: unlocked ? AppColors.accent : AppColors.meta,
+          const Icon(
+            Icons.lock_outline_rounded,
+            color: AppColors.meta,
             size: 22,
           ),
         ],
@@ -630,49 +611,20 @@ class _TxRow extends StatelessWidget {
 // Dialogs
 // ---------------------------------------------------------------------------
 
-class _PinDialog extends StatefulWidget {
-  const _PinDialog();
+class _MobileOnlyDialog extends StatelessWidget {
+  const _MobileOnlyDialog({required this.action});
 
-  @override
-  State<_PinDialog> createState() => _PinDialogState();
-}
-
-class _PinDialogState extends State<_PinDialog> {
-  final _controller = TextEditingController();
-  final _focus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _controller.addListener(() {
-      setState(() {});
-      if (_controller.text.length == 6) {
-        // Placeholder: any 6 digits unlock. Real check uses the wallet PIN
-        // RPC in the backend phase.
-        Future.delayed(const Duration(milliseconds: 150), () {
-          if (mounted) Navigator.of(context).pop(true);
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
+  final String action;
 
   @override
   Widget build(BuildContext context) {
-    final digits = _controller.text.length;
     return Dialog(
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 380),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(28, 28, 28, 22),
+          padding: const EdgeInsets.fromLTRB(28, 28, 28, 18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -684,89 +636,46 @@ class _PinDialogState extends State<_PinDialog> {
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
-                  Icons.lock_outline_rounded,
+                  Icons.phone_iphone_rounded,
                   color: AppColors.accent,
                   size: 30,
                 ),
               ),
               const SizedBox(height: 16),
               const Text(
-                'Enter wallet PIN',
+                'Available on mobile only',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: AppColors.heading,
                 ),
               ),
-              const SizedBox(height: 6),
-              const Text(
-                'Use the 6-digit PIN you set in the SchatzApp mobile app.',
+              const SizedBox(height: 8),
+              Text(
+                'You can only access $action from the SchatzApp mobile app.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: AppColors.meta),
-              ),
-              const SizedBox(height: 22),
-              GestureDetector(
-                onTap: () => _focus.requestFocus(),
-                child: Stack(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (var i = 0; i < 6; i++)
-                          Container(
-                            width: 42,
-                            height: 50,
-                            margin: const EdgeInsets.symmetric(horizontal: 4),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF7F5FB),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: i == digits
-                                    ? AppColors.accent
-                                    : AppColors.border,
-                                width: i == digits ? 1.6 : 1,
-                              ),
-                            ),
-                            child: i < digits
-                                ? const Icon(
-                                    Icons.circle,
-                                    size: 12,
-                                    color: AppColors.heading,
-                                  )
-                                : null,
-                          ),
-                      ],
-                    ),
-                    Positioned.fill(
-                      child: Opacity(
-                        opacity: 0,
-                        child: TextField(
-                          controller: _controller,
-                          focusNode: _focus,
-                          autofocus: true,
-                          maxLength: 6,
-                          keyboardType: TextInputType.number,
-                          obscureText: true,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                          decoration: const InputDecoration(
-                            counterText: '',
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                style: const TextStyle(
+                  fontSize: 14.5,
+                  height: 1.4,
+                  color: AppColors.meta,
                 ),
               ),
-              const SizedBox(height: 18),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text(
-                  'Cancel',
-                  style: TextStyle(color: AppColors.meta),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ],
