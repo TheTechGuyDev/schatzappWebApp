@@ -48,10 +48,8 @@ class AppTheme {
       scaffoldBackgroundColor: AppColors.pageBg,
     );
     return base.copyWith(
-      textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
-        bodyColor: AppColors.text,
-        displayColor: AppColors.heading,
-      ),
+      textTheme: GoogleFonts.interTextTheme(base.textTheme)
+          .apply(bodyColor: AppColors.text, displayColor: AppColors.heading),
     );
   }
 }

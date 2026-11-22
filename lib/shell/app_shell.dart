@@ -17,8 +17,13 @@ ScreenSize screenSizeOf(BuildContext context) {
 }
 
 class _NavItem {
-  const _NavItem(this.path, this.label, this.icon, this.activeIcon,
-      [this.badge = 0]);
+  const _NavItem(
+    this.path,
+    this.label,
+    this.icon,
+    this.activeIcon, [
+    this.badge = 0,
+  ]);
 
   final String path;
   final String label;
@@ -28,15 +33,33 @@ class _NavItem {
 }
 
 const _navItems = [
-  _NavItem('/chats', 'Chats', Icons.chat_bubble_outline_rounded,
-      Icons.chat_bubble_outline_rounded, 1),
+  _NavItem(
+    '/chats',
+    'Chats',
+    Icons.chat_bubble_outline_rounded,
+    Icons.chat_bubble_outline_rounded,
+    1,
+  ),
   _NavItem('/calls', 'Calls', Icons.call_outlined, Icons.call),
-  _NavItem('/wallets', 'Wallets', Icons.account_balance_wallet_outlined,
-      Icons.account_balance_wallet_outlined),
-  _NavItem('/stories', 'Stories', Icons.motion_photos_on_outlined,
-      Icons.motion_photos_on_outlined),
-  _NavItem('/profile', 'Profile', Icons.account_circle_outlined,
-      Icons.account_circle_outlined, 1),
+  _NavItem(
+    '/wallets',
+    'Wallets',
+    Icons.account_balance_wallet_outlined,
+    Icons.account_balance_wallet_outlined,
+  ),
+  _NavItem(
+    '/stories',
+    'Stories',
+    Icons.motion_photos_on_outlined,
+    Icons.motion_photos_on_outlined,
+  ),
+  _NavItem(
+    '/profile',
+    'Profile',
+    Icons.account_circle_outlined,
+    Icons.account_circle_outlined,
+    1,
+  ),
 ];
 
 /// Signed-in layout: left nav rail on desktop (collapsible) and tablet
@@ -161,8 +184,7 @@ class _Rail extends StatelessWidget {
             ),
             if (canToggle)
               Align(
-                alignment:
-                    collapsed ? Alignment.center : Alignment.centerRight,
+                alignment: collapsed ? Alignment.center : Alignment.centerRight,
                 child: Padding(
                   padding: EdgeInsets.only(right: collapsed ? 0 : 6, top: 4),
                   child: IconButton(
@@ -300,8 +322,9 @@ class _RailItem extends StatelessWidget {
                           item.label,
                           style: TextStyle(
                             fontSize: 16,
-                            fontWeight:
-                                active ? FontWeight.w600 : FontWeight.w500,
+                            fontWeight: active
+                                ? FontWeight.w600
+                                : FontWeight.w500,
                             color: color,
                           ),
                         ),

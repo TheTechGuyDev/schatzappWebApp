@@ -27,11 +27,13 @@ class _CallsPageState extends State<CallsPage> {
       final pass = switch (_filter) {
         CallFilter.all => true,
         CallFilter.missed => c.direction == CallDirection.missed,
-        CallFilter.incoming => c.direction == CallDirection.incoming ||
-            c.direction == CallDirection.declined ||
-            c.direction == CallDirection.missed,
-        CallFilter.outgoing => c.direction == CallDirection.outgoing ||
-            c.direction == CallDirection.cancelled,
+        CallFilter.incoming =>
+          c.direction == CallDirection.incoming ||
+              c.direction == CallDirection.declined ||
+              c.direction == CallDirection.missed,
+        CallFilter.outgoing =>
+          c.direction == CallDirection.outgoing ||
+              c.direction == CallDirection.cancelled,
       };
       return pass && (q.isEmpty || c.name.toLowerCase().contains(q));
     }).toList();
@@ -71,7 +73,10 @@ class _CallsPageState extends State<CallsPage> {
           );
 
     if (size == ScreenSize.phone) {
-      return Container(color: Colors.white, child: call == null ? list : details);
+      return Container(
+        color: Colors.white,
+        child: call == null ? list : details,
+      );
     }
 
     return Row(
@@ -210,12 +215,12 @@ class _CallList extends StatelessWidget {
 }
 
 IconData _directionIcon(CallDirection d) => switch (d) {
-      CallDirection.incoming => Icons.south_west,
-      CallDirection.outgoing => Icons.north_east,
-      CallDirection.cancelled => Icons.north_east,
-      CallDirection.declined => Icons.call_missed,
-      CallDirection.missed => Icons.call_missed,
-    };
+  CallDirection.incoming => Icons.south_west,
+  CallDirection.outgoing => Icons.north_east,
+  CallDirection.cancelled => Icons.north_east,
+  CallDirection.declined => Icons.call_missed,
+  CallDirection.missed => Icons.call_missed,
+};
 
 class _CallTile extends StatelessWidget {
   const _CallTile({
@@ -292,8 +297,8 @@ class _CallTile extends StatelessWidget {
                   missed
                       ? Icons.notifications_active_outlined
                       : (call.isVideo
-                          ? Icons.videocam_outlined
-                          : Icons.call_outlined),
+                            ? Icons.videocam_outlined
+                            : Icons.call_outlined),
                   color: AppColors.accent,
                   size: 30,
                 ),
@@ -484,26 +489,23 @@ class _CallInfoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget row(String k, String v, {bool last = false}) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
-          decoration: BoxDecoration(
-            border: last
-                ? null
-                : const Border(bottom: BorderSide(color: AppColors.border)),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+      decoration: BoxDecoration(
+        border: last
+            ? null
+            : const Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          Text(k, style: const TextStyle(fontSize: 17, color: AppColors.body)),
+          const Spacer(),
+          Text(
+            v,
+            style: const TextStyle(fontSize: 17, color: AppColors.heading),
           ),
-          child: Row(
-            children: [
-              Text(
-                k,
-                style: const TextStyle(fontSize: 17, color: AppColors.body),
-              ),
-              const Spacer(),
-              Text(
-                v,
-                style: const TextStyle(fontSize: 17, color: AppColors.heading),
-              ),
-            ],
-          ),
-        );
+        ],
+      ),
+    );
 
     return Container(
       decoration: BoxDecoration(

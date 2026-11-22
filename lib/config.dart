@@ -11,7 +11,6 @@ class AppConfig {
 
   static const supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhrY3lrZHhpaW52bWVweGViZHNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTY0OTgsImV4cCI6MjEwMjg5MjQ5OH0.YSHUDWqOAd5mSuABx9_J4_phV0rdidy-CIBdqqVWJ1U',
+    defaultValue: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhrY3lrZHhpaW52bWVweGViZHNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTY0OTgsImV4cCI6MjEwMjg5MjQ5OH0.YSHUDWqOAd5mSuABx9_J4_phV0rdidy-CIBdqqVWJ1U',
   );
 }

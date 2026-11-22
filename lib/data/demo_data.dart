@@ -19,6 +19,10 @@ class DemoChat {
     this.previewIsPhoto = false,
     this.marker = ChatMarker.none,
     this.avatarColor,
+    this.phone = '',
+    this.about = 'Hey there! I am using SchatzApp.',
+    this.members = const [],
+    this.mediaCount = 0,
   });
 
   final String id;
@@ -34,6 +38,16 @@ class DemoChat {
 
   /// Null means no photo: show the default person or group icon.
   final Color? avatarColor;
+
+  final String phone;
+
+  /// About text for people, description for groups.
+  final String about;
+
+  /// Group member names (groups only).
+  final List<String> members;
+
+  final int mediaCount;
 }
 
 enum MessageKind { text, image }
@@ -63,6 +77,9 @@ const demoChats = <DemoChat>[
     unread: 1,
     isOnline: true,
     avatarColor: Color(0xFF8A6A55),
+    phone: '+44 7700 900123',
+    about: 'Building wealth, one step at a time.',
+    mediaCount: 24,
   ),
   DemoChat(
     id: 'best',
@@ -71,6 +88,9 @@ const demoChats = <DemoChat>[
     time: 'Tuesday',
     isGroup: true,
     avatarColor: Color(0xFFB0413E),
+    about: 'Friends and good vibes only.',
+    members: ['Mr Kesta Wealth', 'My Airtel Number', 'Temidayo WAM'],
+    mediaCount: 12,
   ),
   DemoChat(
     id: 'sdff',
@@ -78,6 +98,8 @@ const demoChats = <DemoChat>[
     preview: '',
     time: '11/12/26',
     isGroup: true,
+    about: '',
+    members: ['Mr Kesta Wealth'],
   ),
   DemoChat(
     id: 'kskaka',
@@ -85,6 +107,8 @@ const demoChats = <DemoChat>[
     preview: '',
     time: '11/12/26',
     isGroup: true,
+    about: '',
+    members: ['Temidayo WAM'],
   ),
   DemoChat(
     id: 'airtel',
@@ -93,6 +117,7 @@ const demoChats = <DemoChat>[
     time: '11/12/26',
     marker: ChatMarker.activeStatus,
     avatarColor: Color(0xFF6B6F78),
+    phone: '+234 901 234 5678',
   ),
   DemoChat(
     id: 'wam',
@@ -102,6 +127,8 @@ const demoChats = <DemoChat>[
     previewIsPhoto: true,
     marker: ChatMarker.seenStatus,
     avatarColor: Color(0xFF3F7D4E),
+    phone: '+234 803 555 0101',
+    mediaCount: 3,
   ),
   DemoChat(
     id: 'archived',
@@ -110,6 +137,7 @@ const demoChats = <DemoChat>[
     time: '10/30/26',
     isGroup: true,
     isArchived: true,
+    members: ['Mr Kesta Wealth', 'Temidayo WAM'],
   ),
 ];
 
@@ -132,15 +160,22 @@ const demoMessages = <String, List<DemoMessage>>{
     DemoMessage(text: "That's beautiful.", time: '2:50 PM', isMine: true),
   ],
   'best': [
-    DemoMessage(text: 'Who is coming on Saturday?', time: '9:10 AM', isMine: false),
+    DemoMessage(
+      text: 'Who is coming on Saturday?',
+      time: '9:10 AM',
+      isMine: false,
+    ),
     DemoMessage(text: 'I will be there', time: '9:12 AM', isMine: true),
     DemoMessage(text: 'calm down', time: '9:15 AM', isMine: false),
   ],
-  'airtel': [
-    DemoMessage(text: 'Guy', time: '4:02 PM', isMine: false),
-  ],
+  'airtel': [DemoMessage(text: 'Guy', time: '4:02 PM', isMine: false)],
   'wam': [
-    DemoMessage(text: '', time: '6:20 PM', isMine: false, kind: MessageKind.image),
+    DemoMessage(
+      text: '',
+      time: '6:20 PM',
+      isMine: false,
+      kind: MessageKind.image,
+    ),
   ],
   'archived': [
     DemoMessage(text: 'See you all next week', time: '1:00 PM', isMine: false),
@@ -179,27 +214,95 @@ class DemoCall {
   final Color avatarColor;
 
   String get label => switch (direction) {
-        CallDirection.incoming => 'Incoming',
-        CallDirection.outgoing => 'Outgoing',
-        CallDirection.declined => 'Declined',
-        CallDirection.cancelled => 'Cancelled',
-        CallDirection.missed => 'Missed',
-      };
+    CallDirection.incoming => 'Incoming',
+    CallDirection.outgoing => 'Outgoing',
+    CallDirection.declined => 'Declined',
+    CallDirection.cancelled => 'Cancelled',
+    CallDirection.missed => 'Missed',
+  };
 
   String get typeLabel => '$label Call';
 }
 
 const demoCalls = <DemoCall>[
-  DemoCall(id: 'c1', name: 'Mr Kesta Wealth', direction: CallDirection.incoming, date: '21 Nov', time: '7:03 PM', duration: '3m 21s'),
-  DemoCall(id: 'c2', name: 'Mr Kesta Wealth', direction: CallDirection.outgoing, date: '21 Nov', time: '7:01 PM', duration: '26s'),
-  DemoCall(id: 'c3', name: 'Mr Kesta Wealth', direction: CallDirection.outgoing, date: '21 Nov', time: '7:00 PM', duration: '17s'),
-  DemoCall(id: 'c4', name: 'Mr Kesta Wealth', direction: CallDirection.declined, date: '21 Nov', time: '7:00 PM'),
-  DemoCall(id: 'c5', name: 'Mr Kesta Wealth', direction: CallDirection.incoming, date: '21 Nov', time: '6:58 PM', duration: '52s'),
-  DemoCall(id: 'c6', name: 'Mr Kesta Wealth', direction: CallDirection.incoming, date: '21 Nov', time: '6:20 PM', duration: '1m 27s'),
-  DemoCall(id: 'c7', name: 'Mr Kesta Wealth', direction: CallDirection.incoming, date: '21 Nov', time: '3:12 PM', duration: '1m 19s'),
-  DemoCall(id: 'c8', name: 'Mr Kesta Wealth', direction: CallDirection.cancelled, date: '21 Nov', time: '3:11 PM'),
-  DemoCall(id: 'c9', name: 'Mr Kesta Wealth', direction: CallDirection.missed, date: '20 Nov', time: '6:21 PM', isVideo: false),
-  DemoCall(id: 'c10', name: 'Mr Kesta Wealth', direction: CallDirection.missed, date: '20 Nov', time: '6:20 PM', isVideo: false),
+  DemoCall(
+    id: 'c1',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.incoming,
+    date: '21 Nov',
+    time: '7:03 PM',
+    duration: '3m 21s',
+  ),
+  DemoCall(
+    id: 'c2',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.outgoing,
+    date: '21 Nov',
+    time: '7:01 PM',
+    duration: '26s',
+  ),
+  DemoCall(
+    id: 'c3',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.outgoing,
+    date: '21 Nov',
+    time: '7:00 PM',
+    duration: '17s',
+  ),
+  DemoCall(
+    id: 'c4',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.declined,
+    date: '21 Nov',
+    time: '7:00 PM',
+  ),
+  DemoCall(
+    id: 'c5',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.incoming,
+    date: '21 Nov',
+    time: '6:58 PM',
+    duration: '52s',
+  ),
+  DemoCall(
+    id: 'c6',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.incoming,
+    date: '21 Nov',
+    time: '6:20 PM',
+    duration: '1m 27s',
+  ),
+  DemoCall(
+    id: 'c7',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.incoming,
+    date: '21 Nov',
+    time: '3:12 PM',
+    duration: '1m 19s',
+  ),
+  DemoCall(
+    id: 'c8',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.cancelled,
+    date: '21 Nov',
+    time: '3:11 PM',
+  ),
+  DemoCall(
+    id: 'c9',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.missed,
+    date: '20 Nov',
+    time: '6:21 PM',
+    isVideo: false,
+  ),
+  DemoCall(
+    id: 'c10',
+    name: 'Mr Kesta Wealth',
+    direction: CallDirection.missed,
+    date: '20 Nov',
+    time: '6:20 PM',
+    isVideo: false,
+  ),
 ];
 
 const demoCurrentUserName = 'Chloe Bites';

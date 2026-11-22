@@ -142,8 +142,11 @@ class GetAppPage extends StatelessWidget {
                       icon: Icons.apple,
                       small: 'Download on the',
                       big: 'App Store',
-                      onTap: () =>
-                          _openStore(context, 'the App Store', StoreLinks.appStore),
+                      onTap: () => _openStore(
+                        context,
+                        'the App Store',
+                        StoreLinks.appStore,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _StoreButton(

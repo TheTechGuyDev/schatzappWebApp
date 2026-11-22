@@ -5,6 +5,8 @@ import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/brand_logo.dart';
+import '../../widgets/sunset_painter.dart';
+import 'contact_info_panel.dart';
 
 /// Chats tab (UI image 2). Uses placeholder data until the backend phase.
 class ChatsPage extends StatefulWidget {
@@ -24,6 +26,7 @@ class _ChatsPageState extends State<ChatsPage> {
     for (final e in demoMessages.entries) e.key: List.of(e.value),
   };
   final Set<String> _readIds = {};
+  bool _infoOpen = false;
 
   List<DemoChat> get _visibleChats {
     final q = _query.trim().toLowerCase();
@@ -51,9 +54,9 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   void _open(DemoChat c) => setState(() {
-        _selectedId = c.id;
-        _readIds.add(c.id);
-      });
+    _selectedId = c.id;
+    _readIds.add(c.id);
+  });
 
   void _send(String text) {
     final id = _selectedId;
@@ -91,40 +94,69 @@ class _ChatsPageState extends State<ChatsPage> {
             chat: chat,
             messages: _messages[chat.id] ?? const [],
             onSend: _send,
+            onOpenInfo: () => setState(() => _infoOpen = true),
             onBack: size == ScreenSize.phone
                 ? () => setState(() => _selectedId = null)
                 : null,
           );
+    final info = (chat != null && _infoOpen)
+        ? ContactInfoPanel(
+            key: ValueKey('info-${chat.id}'),
+            chat: chat,
+            onClose: () => setState(() => _infoOpen = false),
+          )
+        : null;
 
     if (size == ScreenSize.phone) {
-      return chat == null ? list : conversation;
+      return info ?? (chat == null ? list : conversation);
     }
 
+    final listWidth = size == ScreenSize.desktop ? 360.0 : 320.0;
     return Padding(
       padding: const EdgeInsets.only(top: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            width: size == ScreenSize.desktop ? 360 : 320,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(24),
-                  topRight: Radius.circular(24),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          // Three columns when there is room; otherwise the info panel
+          // takes the conversation's place until it is closed.
+          final remaining = c.maxWidth - listWidth;
+          final infoWidth = remaining >= 900 ? 380.0 : 340.0;
+          final threeColumns = remaining >= infoWidth + 380;
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: listWidth, child: _listContainer(list)),
+              if (info == null)
+                Expanded(child: conversation)
+              else if (threeColumns) ...[
+                Expanded(child: conversation),
+                Container(
+                  width: infoWidth,
+                  decoration: const BoxDecoration(
+                    border: Border(left: BorderSide(color: AppColors.border)),
+                  ),
+                  child: info,
                 ),
-                border: Border(
-                  right: BorderSide(color: AppColors.border),
-                ),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: list,
-            ),
-          ),
-          Expanded(child: conversation),
-        ],
+              ] else
+                Expanded(child: info),
+            ],
+          );
+        },
       ),
+    );
+  }
+
+  Widget _listContainer(Widget list) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+        border: Border(right: BorderSide(color: AppColors.border)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: list,
     );
   }
 }
@@ -352,8 +384,9 @@ class _ChatTile extends StatelessWidget {
                       chat.time,
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight:
-                            hasUnread ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight: hasUnread
+                            ? FontWeight.w600
+                            : FontWeight.w400,
                         color: hasUnread ? AppColors.accent : AppColors.meta,
                       ),
                     ),
@@ -427,12 +460,14 @@ class _ConversationPane extends StatefulWidget {
     required this.chat,
     required this.messages,
     required this.onSend,
+    required this.onOpenInfo,
     this.onBack,
   });
 
   final DemoChat chat;
   final List<DemoMessage> messages;
   final ValueChanged<String> onSend;
+  final VoidCallback onOpenInfo;
   final VoidCallback? onBack;
 
   @override
@@ -468,7 +503,11 @@ class _ConversationPaneState extends State<_ConversationPane> {
     final compact = widget.onBack != null;
     return Column(
       children: [
-        _ConversationHeader(chat: chat, onBack: widget.onBack),
+        _ConversationHeader(
+          chat: chat,
+          onBack: widget.onBack,
+          onOpenInfo: widget.onOpenInfo,
+        ),
         Expanded(
           child: _WallpaperBackground(
             child: ListView(
@@ -495,9 +534,14 @@ class _ConversationPaneState extends State<_ConversationPane> {
 }
 
 class _ConversationHeader extends StatelessWidget {
-  const _ConversationHeader({required this.chat, this.onBack});
+  const _ConversationHeader({
+    required this.chat,
+    required this.onOpenInfo,
+    this.onBack,
+  });
 
   final DemoChat chat;
+  final VoidCallback onOpenInfo;
   final VoidCallback? onBack;
 
   @override
@@ -519,46 +563,75 @@ class _ConversationHeader extends StatelessWidget {
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back, color: AppColors.heading),
             ),
-          Avatar(
-            name: chat.name,
-            color: chat.avatarColor,
-            isGroup: chat.isGroup,
-            size: 48,
-          ),
-          const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  chat.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.heading,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                if (chat.isOnline)
-                  const Row(
+            child: Tooltip(
+              message: chat.isGroup ? 'Group info' : 'Contact info',
+              waitDuration: const Duration(milliseconds: 600),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onOpenInfo,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
                     children: [
-                      Icon(Icons.circle, size: 10, color: AppColors.online),
-                      SizedBox(width: 6),
-                      Text(
-                        'Online',
-                        style: TextStyle(fontSize: 14, color: AppColors.body),
+                      Avatar(
+                        name: chat.name,
+                        color: chat.avatarColor,
+                        isGroup: chat.isGroup,
+                        size: 48,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              chat.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.heading,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            if (chat.isOnline)
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.circle,
+                                    size: 10,
+                                    color: AppColors.online,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Online',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: AppColors.body,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            else
+                              Text(
+                                chat.isGroup
+                                    ? 'Click here for group info'
+                                    : 'Last seen recently',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: AppColors.meta,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ],
-                  )
-                else
-                  Text(
-                    chat.isGroup ? 'Tap for group info' : 'Last seen recently',
-                    style: const TextStyle(fontSize: 14, color: AppColors.meta),
                   ),
-              ],
+                ),
+              ),
             ),
           ),
           IconButton(
@@ -677,8 +750,9 @@ class _MessageBubble extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
-          mainAxisAlignment:
-              mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+          mainAxisAlignment: mine
+              ? MainAxisAlignment.end
+              : MainAxisAlignment.start,
           children: [
             Container(
               padding: const EdgeInsets.all(4),
@@ -695,7 +769,7 @@ class _MessageBubble extends StatelessWidget {
                   child: Stack(
                     children: [
                       Positioned.fill(
-                        child: CustomPaint(painter: _SunsetPainter()),
+                        child: CustomPaint(painter: SunsetPainter()),
                       ),
                       Positioned(
                         right: 10,
@@ -739,8 +813,9 @@ class _MessageBubble extends StatelessWidget {
     }
 
     final textColor = mine ? Colors.white : AppColors.heading;
-    final metaColor =
-        mine ? Colors.white.withValues(alpha: 0.85) : AppColors.meta;
+    final metaColor = mine
+        ? Colors.white.withValues(alpha: 0.85)
+        : AppColors.meta;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Align(
@@ -810,70 +885,6 @@ final _bubbleShadow = [
     offset: const Offset(0, 3),
   ),
 ];
-
-/// Placeholder image for the demo photo message.
-class _SunsetPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final sky = Rect.fromLTWH(0, 0, w, h * 0.62);
-    canvas.drawRect(
-      sky,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF3B2A5C), Color(0xFFD9573A), Color(0xFFF6B13D)],
-          stops: [0.0, 0.55, 1.0],
-        ).createShader(sky),
-    );
-    canvas.drawCircle(
-      Offset(w * 0.58, h * 0.6),
-      h * 0.09,
-      Paint()..color = const Color(0xFFFFE08A),
-    );
-    final mountains = Path()
-      ..moveTo(0, h * 0.62)
-      ..lineTo(0, h * 0.48)
-      ..lineTo(w * 0.15, h * 0.38)
-      ..lineTo(w * 0.3, h * 0.5)
-      ..lineTo(w * 0.45, h * 0.34)
-      ..lineTo(w * 0.62, h * 0.5)
-      ..lineTo(w * 0.78, h * 0.4)
-      ..lineTo(w, h * 0.52)
-      ..lineTo(w, h * 0.62)
-      ..close();
-    canvas.drawPath(mountains, Paint()..color = const Color(0xFF2B2234));
-    final water = Rect.fromLTWH(0, h * 0.62, w, h * 0.38);
-    canvas.drawRect(
-      water,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFE88A3A), Color(0xFF7A3A2E), Color(0xFF2A1E2C)],
-        ).createShader(water),
-    );
-    // Sun reflection: short shimmering strokes on the water.
-    final glint = Paint()
-      ..color = const Color(0xFFFFD27A).withValues(alpha: 0.55)
-      ..strokeWidth = 2
-      ..strokeCap = StrokeCap.round;
-    for (var i = 0; i < 6; i++) {
-      final y = h * (0.67 + i * 0.05);
-      final half = w * (0.07 - i * 0.009);
-      canvas.drawLine(
-        Offset(w * 0.58 - half, y),
-        Offset(w * 0.58 + half, y),
-        glint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
 
 class _Composer extends StatefulWidget {
   const _Composer({required this.onSend});
@@ -975,8 +986,11 @@ class _ComposerState extends State<_Composer> {
                     colors: [Color(0xFFAE5CF2), Color(0xFF8A3BE6)],
                   ),
                 ),
-                child: const Icon(Icons.send_rounded,
-                    color: Colors.white, size: 22),
+                child: const Icon(
+                  Icons.send_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
               ),
             ),
           ],

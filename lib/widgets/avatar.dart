@@ -209,8 +209,8 @@ class FilterChips<T> extends StatelessWidget {
                     color: values[i] == selected
                         ? AppColors.accent
                         : (filledInactive
-                            ? const Color(0xFFF1EEF6)
-                            : Colors.transparent),
+                              ? const Color(0xFFF1EEF6)
+                              : Colors.transparent),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(

@@ -21,15 +21,9 @@ final appRouter = GoRouter(
     return null;
   },
   routes: [
-    GoRoute(
-      path: GetAppPage.routePath,
-      builder: (_, _) => const GetAppPage(),
-    ),
+    GoRoute(path: GetAppPage.routePath, builder: (_, _) => const GetAppPage()),
     GoRoute(path: '/', redirect: (_, _) => SignInPage.routePath),
-    GoRoute(
-      path: SignInPage.routePath,
-      builder: (_, _) => const SignInPage(),
-    ),
+    GoRoute(path: SignInPage.routePath, builder: (_, _) => const SignInPage()),
     ShellRoute(
       builder: (_, state, child) =>
           AppShell(location: state.uri.path, child: child),

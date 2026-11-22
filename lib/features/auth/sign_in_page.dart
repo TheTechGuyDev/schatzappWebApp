@@ -269,7 +269,11 @@ class _WelcomePanel extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [AppColors.panelTop, Color(0xFF7A30DA), AppColors.panelBottom],
+          colors: [
+            AppColors.panelTop,
+            Color(0xFF7A30DA),
+            AppColors.panelBottom,
+          ],
         ),
       ),
       child: Stack(
@@ -359,11 +363,7 @@ class _SignInContent extends StatelessWidget {
     const stepsColumn = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _Steps(),
-        SizedBox(height: 26),
-        _FeatureRow(),
-      ],
+      children: [_Steps(), SizedBox(height: 26), _FeatureRow()],
     );
 
     return Padding(
