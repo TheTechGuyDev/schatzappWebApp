@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../theme/app_theme.dart';
 import '../../widgets/brand_logo.dart';
+import 'phone_login.dart';
 
 /// Web sign-in screen (UI image 1).
 ///
@@ -21,6 +22,7 @@ class SignInPage extends StatefulWidget {
 
 class _SignInPageState extends State<SignInPage> {
   bool _keepSignedIn = true;
+  bool _phoneMode = false;
 
   void _comingSoon(String what) {
     ScaffoldMessenger.of(context)
@@ -65,7 +67,12 @@ class _SignInPageState extends State<SignInPage> {
                             onKeepSignedIn: (v) =>
                                 setState(() => _keepSignedIn = v),
                             onHelp: () => _comingSoon('Help'),
-                            onPhoneLogin: () => context.go('/chats'),
+                            phoneMode: _phoneMode,
+                            onPhoneLogin: () =>
+                                setState(() => _phoneMode = true),
+                            onBackToQr: () =>
+                                setState(() => _phoneMode = false),
+                            onSignedIn: () => context.go('/chats'),
                           ),
                         ),
                       ),
@@ -212,7 +219,10 @@ class _Card extends StatelessWidget {
     required this.keepSignedIn,
     required this.onKeepSignedIn,
     required this.onHelp,
+    required this.phoneMode,
     required this.onPhoneLogin,
+    required this.onBackToQr,
+    required this.onSignedIn,
   });
 
   final bool showWelcomePanel;
@@ -220,17 +230,29 @@ class _Card extends StatelessWidget {
   final bool keepSignedIn;
   final ValueChanged<bool> onKeepSignedIn;
   final VoidCallback onHelp;
+  final bool phoneMode;
   final VoidCallback onPhoneLogin;
+  final VoidCallback onBackToQr;
+  final VoidCallback onSignedIn;
 
   @override
   Widget build(BuildContext context) {
-    final content = _SignInContent(
-      stackQr: stackQr,
-      keepSignedIn: keepSignedIn,
-      onKeepSignedIn: onKeepSignedIn,
-      onHelp: onHelp,
-      onPhoneLogin: onPhoneLogin,
-    );
+    final Widget content = phoneMode
+        ? PhoneLoginContent(
+            compact: stackQr,
+            keepSignedIn: keepSignedIn,
+            onKeepSignedIn: onKeepSignedIn,
+            onBackToQr: onBackToQr,
+            onSignedIn: onSignedIn,
+            onHelp: onHelp,
+          )
+        : _SignInContent(
+            stackQr: stackQr,
+            keepSignedIn: keepSignedIn,
+            onKeepSignedIn: onKeepSignedIn,
+            onHelp: onHelp,
+            onPhoneLogin: onPhoneLogin,
+          );
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,

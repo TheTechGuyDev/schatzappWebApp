@@ -5,6 +5,8 @@ import '../../data/demo_data.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
+import '../chats/chat_dialogs.dart';
+import 'call_screen.dart';
 
 /// Calls tab (UI image 3). Uses placeholder data until the backend phase.
 class CallsPage extends StatefulWidget {
@@ -145,15 +147,52 @@ class _CallList extends StatelessWidget {
                   ),
                 ),
               ),
-              IconButton(
+              PopupMenuButton<int>(
                 tooltip: 'More',
-                onPressed: () => soon('Call options'),
-                icon: const Icon(Icons.more_horiz, size: 28),
-                color: AppColors.heading,
+                position: PopupMenuPosition.under,
+                icon: const Icon(
+                  Icons.more_horiz,
+                  size: 28,
+                  color: AppColors.heading,
+                ),
+                onSelected: (v) {
+                  if (v == 0) {
+                    showIncomingCall(
+                      context,
+                      name: 'Mr Kesta Wealth',
+                      color: const Color(0xFF8A6A55),
+                      video: true,
+                    );
+                  } else {
+                    soon('Clear call log');
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 0,
+                    child: Text('Preview incoming call (demo)'),
+                  ),
+                  PopupMenuItem(value: 1, child: Text('Clear call log')),
+                ],
               ),
               IconButton(
                 tooltip: 'New call',
-                onPressed: () => soon('New call'),
+                onPressed: () async {
+                  final picked = await showDialog<List<DemoContact>>(
+                    context: context,
+                    builder: (_) =>
+                        const ContactPickerDialog(title: 'New call'),
+                  );
+                  if (picked == null || picked.isEmpty || !context.mounted) {
+                    return;
+                  }
+                  showCallScreen(
+                    context,
+                    name: picked.first.name,
+                    color: picked.first.color,
+                    video: false,
+                  );
+                },
                 icon: const Icon(Icons.add_call, size: 26),
                 color: AppColors.heading,
               ),
@@ -386,14 +425,24 @@ class _CallDetails extends StatelessWidget {
                     icon: Icons.videocam_outlined,
                     label: 'Video Call',
                     filled: true,
-                    onTap: () => soon('Video calling'),
+                    onTap: () => showCallScreen(
+                      context,
+                      name: call.name,
+                      color: call.avatarColor,
+                      video: true,
+                    ),
                   ),
                   const SizedBox(width: 14),
                   _ActionButton(
                     width: w,
                     icon: Icons.call_outlined,
                     label: 'Voice Call',
-                    onTap: () => soon('Voice calling'),
+                    onTap: () => showCallScreen(
+                      context,
+                      name: call.name,
+                      color: call.avatarColor,
+                      video: false,
+                    ),
                   ),
                   const SizedBox(width: 14),
                   _ActionButton(

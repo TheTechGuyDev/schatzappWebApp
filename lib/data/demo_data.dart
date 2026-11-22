@@ -391,3 +391,121 @@ const demoTransactions = <DemoTransaction>[
     kind: TxKind.giftcard,
   ),
 ];
+
+// ---------------------------------------------------------------------------
+// Private chats, contacts, chat themes, countries
+// ---------------------------------------------------------------------------
+
+/// Locked (Private) chats. Never shown in the normal list or search; only
+/// inside the Private Chats view after the app password gate.
+const demoPrivateChats = <DemoChat>[
+  DemoChat(
+    id: 'p1',
+    name: 'Ada Okafor',
+    preview: 'See you tonight',
+    time: '9:41 PM',
+    unread: 2,
+    avatarColor: Color(0xFFB4508A),
+    phone: '+234 802 111 2233',
+  ),
+  DemoChat(
+    id: 'p2',
+    name: 'Family Vault',
+    preview: 'Documents uploaded',
+    time: 'Monday',
+    isGroup: true,
+    members: ['Mr Kesta Wealth', 'Temidayo WAM'],
+  ),
+];
+
+class DemoContact {
+  const DemoContact(this.name, this.phone, [this.color]);
+
+  final String name;
+  final String phone;
+  final Color? color;
+}
+
+const demoContacts = <DemoContact>[
+  DemoContact('Ada Okafor', '+234 802 111 2233', Color(0xFFB4508A)),
+  DemoContact('Bayo Adeniyi', '+234 805 444 9090', Color(0xFF3E6FB0)),
+  DemoContact('Chloe Bites', '+234 701 000 1234'),
+  DemoContact('Mr Kesta Wealth', '+234 903 287 7996', Color(0xFF8A6A55)),
+  DemoContact('My Airtel Number', '+234 901 234 5678', Color(0xFF6B6F78)),
+  DemoContact('Ngozi Eze', '+234 809 777 1212', Color(0xFF2F8F83)),
+  DemoContact('Temidayo WAM', '+234 803 555 0101', Color(0xFF3F7D4E)),
+  DemoContact('Tunde Bello', '+234 816 333 4545'),
+];
+
+/// Chat themes, same five as the mobile app (theme1 to theme5).
+class ChatThemeDef {
+  const ChatThemeDef({
+    required this.key,
+    required this.sender,
+    required this.receiver,
+    required this.background,
+  });
+
+  final String key;
+  final Color sender;
+  final Color receiver;
+  final Color background;
+
+  String get preview => 'assets/images/themes/$key.jpg';
+}
+
+const chatThemes = <ChatThemeDef>[
+  ChatThemeDef(
+    key: 'theme1',
+    sender: Color(0xFFED50E4),
+    receiver: Color(0xFFF1F5F9),
+    background: Color(0xFFFCE9F6),
+  ),
+  ChatThemeDef(
+    key: 'theme2',
+    sender: Color(0xFFED50E4),
+    receiver: Color(0xFFF1F5F9),
+    background: Color(0xFFFDEFF8),
+  ),
+  ChatThemeDef(
+    key: 'theme3',
+    sender: Color(0xFF3B82F6),
+    receiver: Color(0xFFFFFFFF),
+    background: Color(0xFFEBF1FE),
+  ),
+  ChatThemeDef(
+    key: 'theme4',
+    sender: Color(0xFF0E8BAB),
+    receiver: Color(0xFFE2E8F0),
+    background: Color(0xFFE9F4F7),
+  ),
+  ChatThemeDef(
+    key: 'theme5',
+    sender: Color(0xFF935CCC),
+    receiver: Color(0xFFF0F0F0),
+    background: Color(0xFFFAF4EA),
+  ),
+];
+
+class DemoCountry {
+  const DemoCountry(this.name, this.code, this.dial);
+
+  final String name;
+
+  /// ISO 3166 alpha-2, lower case (used for the flag image).
+  final String code;
+  final String dial;
+}
+
+const demoCountries = <DemoCountry>[
+  DemoCountry('Nigeria', 'ng', '+234'),
+  DemoCountry('Ghana', 'gh', '+233'),
+  DemoCountry('Kenya', 'ke', '+254'),
+  DemoCountry('South Africa', 'za', '+27'),
+  DemoCountry('United Kingdom', 'gb', '+44'),
+  DemoCountry('United States', 'us', '+1'),
+  DemoCountry('Canada', 'ca', '+1'),
+  DemoCountry('Germany', 'de', '+49'),
+  DemoCountry('France', 'fr', '+33'),
+  DemoCountry('United Arab Emirates', 'ae', '+971'),
+];

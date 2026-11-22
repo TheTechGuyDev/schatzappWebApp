@@ -13,10 +13,16 @@ class ContactInfoPanel extends StatefulWidget {
     required this.chat,
     required this.onClose,
     required this.onMessage,
+    required this.onCall,
+    required this.onChatTheme,
+    required this.onAddMember,
   });
 
   final DemoChat chat;
   final VoidCallback onClose;
+  final ValueChanged<bool> onCall;
+  final VoidCallback onChatTheme;
+  final VoidCallback onAddMember;
 
   /// Closes the panel and returns to the conversation.
   final VoidCallback onMessage;
@@ -162,12 +168,12 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                   _ActionCard(
                     icon: Icons.call,
                     label: 'Voice Call',
-                    onTap: () => _soon('Voice calling'),
+                    onTap: () => widget.onCall(false),
                   ),
                   _ActionCard(
                     icon: Icons.videocam,
                     label: 'Video Call',
-                    onTap: () => _soon('Video calling'),
+                    onTap: () => widget.onCall(true),
                   ),
                   Expanded(
                     child: PopupMenuButton<_MoreAction>(
@@ -242,7 +248,7 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                 _MemberRow(
                   name: 'Add member',
                   isAction: true,
-                  onTap: () => _soon('Add member'),
+                  onTap: widget.onAddMember,
                 ),
                 const _MemberRow(name: 'You', isAdmin: true),
                 for (final m in c.members) _MemberRow(name: m),
@@ -270,7 +276,7 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                 icon: Icons.palette_outlined,
                 title: 'Chat Theme',
                 subtitle: 'Pick your preference',
-                onTap: () => _soon('Chat theme'),
+                onTap: widget.onChatTheme,
                 last: group,
               ),
               if (!group)

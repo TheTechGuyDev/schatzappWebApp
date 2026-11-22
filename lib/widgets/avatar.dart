@@ -25,7 +25,11 @@ class Avatar extends StatelessWidget {
   final double? onlineDotSize;
 
   String get _initials {
-    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+    final parts = name
+        .replaceAll(RegExp(r'[^A-Za-z0-9\s]'), '')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty);
     return parts.take(2).map((p) => p[0].toUpperCase()).join();
   }
 
