@@ -5,7 +5,7 @@ import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/nav_icons.dart';
-import '../../widgets/sunset_painter.dart';
+import 'feed_media.dart';
 import 'story_viewer.dart';
 
 /// Stories tab (Stories UI image): Simplified, For You and Story Privacy.
@@ -26,7 +26,7 @@ class _StoriesPageState extends State<StoriesPage> {
   _Tab _tab = _Tab.simplified;
   String _q = '';
   final List<StoryItem> _myItems = [];
-  late List<(DemoStory, int)> _feed = _shuffleFeed();
+  late List<DemoPost> _feed = _shuffleFeed();
 
   /// Story playing in the right-hand panel (Simplified, desktop).
   List<DemoStory>? _playList;
@@ -53,14 +53,8 @@ class _StoriesPageState extends State<StoriesPage> {
 
   void _stop() => setState(() => _playList = null);
 
-  /// For You: every story item on its own, shuffled each time it opens.
-  List<(DemoStory, int)> _shuffleFeed() {
-    final all = [
-      for (final s in demoStories)
-        for (var i = 0; i < s.items.length; i++) (s, i),
-    ];
-    return all..shuffle();
-  }
+  /// For You: posts shuffled each time the tab opens.
+  List<DemoPost> _shuffleFeed() => List.of(demoPosts)..shuffle();
 
   DemoStory get _myStory =>
       DemoStory(name: demoCurrentUserName, time: 'Just now', items: _myItems);
@@ -522,7 +516,7 @@ class _StoryRow extends StatelessWidget {
 class _ForYou extends StatefulWidget {
   const _ForYou({required this.feed});
 
-  final List<(DemoStory, int)> feed;
+  final List<DemoPost> feed;
 
   @override
   State<_ForYou> createState() => _ForYouState();
@@ -537,7 +531,8 @@ class _ForYouState extends State<_ForYou> {
     final items = [
       for (var i = 0; i < widget.feed.length; i++)
         if (!_hidden.contains(i) &&
-            (_q.isEmpty || widget.feed[i].$1.name.toLowerCase().contains(_q)))
+            (_q.isEmpty ||
+                widget.feed[i].author.name.toLowerCase().contains(_q)))
           i,
     ];
     return ListView(
@@ -595,9 +590,8 @@ class _ForYouState extends State<_ForYou> {
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: _FeedPost(
-              key: ValueKey('post-$i'),
-              story: widget.feed[i].$1,
-              item: widget.feed[i].$1.items[widget.feed[i].$2],
+              key: ValueKey('post-${demoPosts.indexOf(widget.feed[i])}'),
+              post: widget.feed[i],
               seed: i,
               onHide: () => setState(() => _hidden.add(i)),
             ),
@@ -611,14 +605,12 @@ class _ForYouState extends State<_ForYou> {
 class _FeedPost extends StatefulWidget {
   const _FeedPost({
     super.key,
-    required this.story,
-    required this.item,
+    required this.post,
     required this.seed,
     required this.onHide,
   });
 
-  final DemoStory story;
-  final StoryItem item;
+  final DemoPost post;
   final int seed;
   final VoidCallback onHide;
 
@@ -652,8 +644,8 @@ class _FeedPostState extends State<_FeedPost> {
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.story;
-    final item = widget.item;
+    final post = widget.post;
+    final s = post.author;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -733,84 +725,41 @@ class _FeedPostState extends State<_FeedPost> {
             ),
           ),
 
-          // Story content (click to open full screen)
+          // Post content: stays in the list (no click to open).
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: () => showStoryViewer(
-                context,
-                stories: [
-                  DemoStory(
-                    name: s.name,
-                    time: s.time,
-                    color: s.color,
-                    items: [item],
-                  ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: SizedBox(
-                  height: 300,
-                  child: item.kind == StoryKind.text
-                      ? Container(
-                          alignment: Alignment.center,
-                          padding: const EdgeInsets.all(24),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                item.background,
-                                Color.lerp(
-                                  item.background,
-                                  Colors.white,
-                                  0.45,
-                                )!,
-                              ],
-                            ),
-                          ),
-                          child: Text(
-                            item.text,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 34,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        )
-                      : Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CustomPaint(painter: SunsetPainter()),
-                            if (item.caption.isNotEmpty)
-                              Positioned(
-                                left: 16,
-                                right: 16,
-                                bottom: 16,
-                                child: Text(
-                                  item.caption,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600,
-                                    shadows: [
-                                      Shadow(
-                                        color: Colors.black54,
-                                        blurRadius: 6,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+            child: post.text != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      height: 300,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            post.background,
+                            Color.lerp(post.background, Colors.white, 0.45)!,
                           ],
                         ),
-                ),
-              ),
-            ),
+                      ),
+                      child: Text(
+                        post.text!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 34,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  )
+                : PostMediaCarousel(
+                    postId: 'post-${demoPosts.indexOf(post)}',
+                    media: post.media,
+                  ),
           ),
 
           // Reactions + Share

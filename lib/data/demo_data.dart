@@ -575,3 +575,58 @@ const demoStories = <DemoStory>[
     items: [StoryItem.photo(caption: 'Weekend vibes')],
   ),
 ];
+
+// ---------------------------------------------------------------------------
+// For You posts (one post can hold several photos/videos: a carousel)
+// ---------------------------------------------------------------------------
+
+class FeedMedia {
+  const FeedMedia.image(this.url) : isVideo = false, thumb = url;
+  const FeedMedia.video(this.url, {required this.thumb}) : isVideo = true;
+
+  /// Asset path for the demo; a storage URL in the backend phase.
+  final String url;
+  final bool isVideo;
+
+  /// Still image used for the blurred background (video thumbnail).
+  final String thumb;
+}
+
+class DemoPost {
+  const DemoPost.media(this.author, this.media)
+    : text = null,
+      background = const Color(0xFF000000);
+  const DemoPost.text(this.author, this.text, this.background)
+    : media = const [];
+
+  final DemoStory author;
+  final List<FeedMedia> media;
+  final String? text;
+  final Color background;
+}
+
+final demoPosts = <DemoPost>[
+  DemoPost.media(demoStories[0], const [
+    FeedMedia.image('assets/demo/beach_portrait.jpg'),
+    FeedMedia.video(
+      'assets/demo/demo_portrait.mp4',
+      thumb: 'assets/demo/demo_portrait_thumb.jpg',
+    ),
+    FeedMedia.image('assets/demo/desert_landscape.jpg'),
+  ]),
+  DemoPost.text(demoStories[0], 'hey', const Color(0xFF0A84FF)),
+  DemoPost.media(demoStories[1], const [
+    FeedMedia.video(
+      'assets/demo/demo_portrait.mp4',
+      thumb: 'assets/demo/demo_portrait_thumb.jpg',
+    ),
+  ]),
+  DemoPost.media(demoStories[2], const [
+    FeedMedia.image('assets/demo/desert_portrait.jpg'),
+  ]),
+  DemoPost.text(
+    demoStories[1],
+    'Building something big. Stay tuned!',
+    const Color(0xFF0E8BAB),
+  ),
+];

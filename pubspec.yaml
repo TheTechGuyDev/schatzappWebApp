@@ -40,6 +40,8 @@ dependencies:
   google_fonts: ^9.0.0
   qr_flutter: ^4.1.0
   web: ^1.1.2
+  video_player: ^2.14.1
+  visibility_detector: ^0.4.0+2
 
 dev_dependencies:
   flutter_test:
@@ -65,6 +67,7 @@ flutter:
   assets:
     - assets/images/
     - assets/images/themes/
+    - assets/demo/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
