@@ -1,3 +1,4 @@
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -7,8 +8,8 @@ import '../../widgets/brand_logo.dart';
 
 /// Web sign-in screen (UI image 1).
 ///
-/// Phase 1 renders the layout. The QR value is a placeholder until the QR
-/// session backend is wired in Phase 3.
+/// UI stage: the QR value is a placeholder and "Log in with Phone Number"
+/// opens the app with demo data until the sign-in backend is wired.
 class SignInPage extends StatefulWidget {
   const SignInPage({super.key});
 
@@ -64,8 +65,7 @@ class _SignInPageState extends State<SignInPage> {
                             onKeepSignedIn: (v) =>
                                 setState(() => _keepSignedIn = v),
                             onHelp: () => _comingSoon('Help'),
-                            onPhoneLogin: () =>
-                                _comingSoon('Phone number login'),
+                            onPhoneLogin: () => context.go('/chats'),
                           ),
                         ),
                       ),

@@ -20,6 +20,19 @@ class AppColors {
   static const lavenderSoft = Color(0xFFF6F1FE);
   static const divider = Color(0xFFE7E3F0);
   static const pageBg = Color(0xFFF7F4FD);
+
+  // App shell (Chats / Calls designs).
+  static const accent = Color(0xFF9B3BE8);
+  static const accentDark = Color(0xFF7A22D6);
+  static const accentSoft = Color(0xFFEDE0FD);
+  static const railBg = Color(0xFFF8F6FD);
+  static const panelBg = Color(0xFFFDFCFF);
+  static const conversationBg = Color(0xFFF6F2FD);
+  static const online = Color(0xFF1DBF3A);
+  static const missed = Color(0xFFE53935);
+  static const meta = Color(0xFF7D7790);
+  static const border = Color(0xFFECE8F4);
+  static const teal = Color(0xFF39D2C0);
 }
 
 class AppTheme {
@@ -35,7 +48,7 @@ class AppTheme {
       scaffoldBackgroundColor: AppColors.pageBg,
     );
     return base.copyWith(
-      textTheme: GoogleFonts.plusJakartaSansTextTheme(base.textTheme).apply(
+      textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
         bodyColor: AppColors.text,
         displayColor: AppColors.heading,
       ),
