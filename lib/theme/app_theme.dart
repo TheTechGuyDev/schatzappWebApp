@@ -12,6 +12,7 @@ class AppColors {
   // Web UI accents matched to the supplied designs.
   static const brandDeep = Color(0xFF5B1CD3);
   static const brandVivid = Color(0xFF7B2FE0);
+  static const wordmark = Color(0xFF5B12B8);
   static const panelTop = Color(0xFF7A22DC);
   static const panelBottom = Color(0xFF5A16C2);
   static const heading = Color(0xFF15122B);

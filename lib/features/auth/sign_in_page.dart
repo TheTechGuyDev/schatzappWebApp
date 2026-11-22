@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:web/web.dart' as web;
 
 import '../../theme/app_theme.dart';
 import '../../widgets/brand_logo.dart';
@@ -112,8 +113,8 @@ class _TopBar extends StatelessWidget {
           child: Row(
             children: [
               BrandLogo(
-                markSize: compact ? 36 : 46,
-                fontSize: compact ? 24 : 31,
+                markSize: compact ? 40 : 54,
+                fontSize: compact ? 24 : 30,
               ),
               const Spacer(),
               if (!compact)
@@ -129,6 +130,28 @@ class _TopBar extends StatelessWidget {
                     child: Text(l, style: linkStyle),
                   ),
               if (!compact) const Spacer(),
+              SizedBox(
+                height: 46,
+                child: FilledButton(
+                  onPressed: () =>
+                      web.window.open('https://schatzapp.com', '_blank'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.wordmark,
+                    shape: const StadiumBorder(),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: compact ? 18 : 26,
+                    ),
+                  ),
+                  child: Text(
+                    'Get Started',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16.5,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -411,8 +434,8 @@ class _QrBox extends StatelessWidget {
           dataModuleShape: QrDataModuleShape.square,
           color: Color(0xFF0E0B1A),
         ),
-        embeddedImage: const AssetImage('assets/images/s_logo.png'),
-        embeddedImageStyle: const QrEmbeddedImageStyle(size: Size(50, 58)),
+        embeddedImage: const AssetImage('assets/images/qr_logo.png'),
+        embeddedImageStyle: const QrEmbeddedImageStyle(size: Size(76, 76)),
       ),
     );
   }
@@ -580,18 +603,30 @@ class _FeatureRow extends StatelessWidget {
         children: [
           for (var i = 0; i < items.length; i++) ...[
             Expanded(
-              child: Column(
-                children: [
-                  Icon(items[i].$1, size: 30, color: AppColors.brandDeep),
-                  const SizedBox(height: 8),
-                  Text(
-                    items[i].$2,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 15,
-                      color: AppColors.heading,
+              // Multi-Device gets a little more room so it stays on one
+              // line and centred under its icon.
+              flex: items[i].$2 == 'Multi-Device' ? 14 : 10,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  children: [
+                    Icon(items[i].$1, size: 30, color: AppColors.brandDeep),
+                    const SizedBox(height: 8),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        items[i].$2,
+                        maxLines: 1,
+                        softWrap: false,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          color: AppColors.heading,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             if (i < items.length - 1)

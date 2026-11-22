@@ -5,38 +5,32 @@ import '../theme/app_theme.dart';
 
 /// The "S" mark followed by the two-tone "SchatzApp" wordmark.
 class BrandLogo extends StatelessWidget {
-  const BrandLogo({super.key, this.markSize = 44, this.fontSize = 30});
+  const BrandLogo({
+    super.key,
+    this.markSize = 44,
+    this.fontSize = 30,
+    this.wordColor = AppColors.wordmark,
+  });
 
   final double markSize;
   final double fontSize;
+  final Color wordColor;
 
   @override
   Widget build(BuildContext context) {
     final style = GoogleFonts.plusJakartaSans(
       fontSize: fontSize,
-      fontWeight: FontWeight.w700,
+      fontWeight: FontWeight.w800,
       letterSpacing: -0.5,
       height: 1,
+      color: wordColor,
     );
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         SMark(size: markSize),
         SizedBox(width: markSize * 0.22),
-        Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: 'Schatz',
-                style: style.copyWith(color: AppColors.heading),
-              ),
-              TextSpan(
-                text: 'App',
-                style: style.copyWith(color: AppColors.brandVivid),
-              ),
-            ],
-          ),
-        ),
+        Text('SchatzApp', style: style),
       ],
     );
   }
