@@ -6,6 +6,7 @@ import 'features/calls/calls_page.dart';
 import 'features/chats/chats_page.dart';
 import 'features/get_app/get_app_page.dart';
 import 'features/placeholder/coming_soon_page.dart';
+import 'features/wallet/wallet_page.dart';
 import 'platform/device_check.dart';
 import 'shell/app_shell.dart';
 
@@ -37,14 +38,8 @@ final appRouter = GoRouter(
           pageBuilder: (_, _) => const NoTransitionPage(child: CallsPage()),
         ),
         GoRoute(
-          path: '/wallets',
-          pageBuilder: (_, _) => const NoTransitionPage(
-            child: ComingSoonPage(
-              title: 'Wallets',
-              icon: Icons.account_balance_wallet_outlined,
-              message: 'The Wallets screen will be built from your next UI.',
-            ),
-          ),
+          path: WalletPage.routePath,
+          pageBuilder: (_, _) => const NoTransitionPage(child: WalletPage()),
         ),
         GoRoute(
           path: '/stories',

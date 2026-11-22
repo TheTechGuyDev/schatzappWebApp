@@ -327,3 +327,67 @@ const demoCalls = <DemoCall>[
 ];
 
 const demoCurrentUserName = 'Chloe Bites';
+
+// ---------------------------------------------------------------------------
+// Wallet
+// ---------------------------------------------------------------------------
+
+const demoWalletBalance = 'SFZ 64,300';
+const demoWalletLocal = '= NGN 941,846';
+
+enum TxKind { transfer, giftcard }
+
+class DemoTransaction {
+  const DemoTransaction({
+    required this.id,
+    required this.title,
+    required this.status,
+    required this.date,
+    required this.amount,
+    required this.kind,
+    this.counterparty = 'Mr Kesta Wealth',
+  });
+
+  final String id;
+  final String title;
+  final String status;
+  final String date;
+  final String amount;
+  final TxKind kind;
+  final String counterparty;
+}
+
+const demoTransactions = <DemoTransaction>[
+  DemoTransaction(
+    id: 't1',
+    title: 'Incoming Transfer',
+    status: 'success',
+    date: '18 Nov 2026 · 6:57 AM',
+    amount: '+\$50.00',
+    kind: TxKind.transfer,
+  ),
+  DemoTransaction(
+    id: 't2',
+    title: 'Incoming Transfer',
+    status: 'success',
+    date: '18 Nov 2026 · 6:56 AM',
+    amount: '+\$50.00',
+    kind: TxKind.transfer,
+  ),
+  DemoTransaction(
+    id: 't3',
+    title: 'Incoming Transfer',
+    status: 'success',
+    date: '15 Nov 2026 · 3:59 PM',
+    amount: '+\$50.00',
+    kind: TxKind.transfer,
+  ),
+  DemoTransaction(
+    id: 't4',
+    title: 'Giftcard_received',
+    status: 'success',
+    date: '10 Nov 2026 · 8:14 PM',
+    amount: '+SCHATZ 1,000.00',
+    kind: TxKind.giftcard,
+  ),
+];
