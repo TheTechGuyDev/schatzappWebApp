@@ -59,3 +59,18 @@ The web tab signs out immediately (Realtime), and its session is deleted on the 
 - Max 7 linked web devices
 - "Keep me signed in" ticked: 7 days; unticked: 24 hours
 - 4 hours without activity: logged out
+
+## Link with code (no SMS)
+
+Phone (logged in) asks for a code:
+
+```
+POST /functions/v1/web-login   (Authorization: Bearer <user JWT>)
+{ "action": "issue_code" }
+-> { ok: true, code: "482913", expires_at, ttl_seconds: 120 }
+-> { ok: false, code: "device_limit", message }   when 7 devices are linked
+```
+
+- Each new code cancels the previous one.
+- A code lasts 2 minutes, works once and locks after 5 wrong tries.
+- The web signs in with `{ action: "code_login", phone, code, ... }`.

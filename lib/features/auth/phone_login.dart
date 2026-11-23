@@ -4,8 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_ui/material_ui.dart';
 
-import 'package:supabase_flutter/supabase_flutter.dart';
-
 import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
 import '../../theme/app_theme.dart';
@@ -13,9 +11,8 @@ import '../../widgets/brand_logo.dart';
 import '../../widgets/flag_image.dart';
 
 /// "Log in with Phone Number" fallback, shown inside the sign-in card.
-/// Mirrors the mobile phone_login (country picker + number, Get OTP) and
-/// verify_mobile_number (6-digit OTP, resend countdown) pages.
-/// Placeholder: any number gets an OTP screen and any 6 digits sign in.
+/// No SMS: the user enters their number, then the 6-digit code shown in the
+/// SchatzApp mobile app (Linked Devices > Link with code).
 class PhoneLoginContent extends StatefulWidget {
   const PhoneLoginContent({
     super.key,
@@ -47,8 +44,6 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
   bool _otpStep = false;
   bool _busy = false;
   String? _error;
-  int _resendIn = 0;
-  Timer? _timer;
 
   @override
   void initState() {
@@ -81,7 +76,6 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
 
   @override
   void dispose() {
-    _timer?.cancel();
     _phone.dispose();
     _otp.dispose();
     _otpFocus.dispose();
@@ -95,41 +89,15 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
       '${_country.dial}${_digits.replaceFirst(RegExp(r'^0+'), '')}';
   String get _fullNumber => '${_country.dial} ${_phone.text.trim()}';
 
-  void _startCountdown() {
-    _timer?.cancel();
-    setState(() => _resendIn = 60);
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) return t.cancel();
-      setState(() => _resendIn--);
-      if (_resendIn <= 0) t.cancel();
-    });
-  }
-
-  Future<void> _getOtp() async {
+  void _continue() {
     if (_digits.length < 7) {
       setState(() => _error = 'Enter a valid phone number');
       return;
     }
     setState(() {
-      _busy = true;
       _error = null;
-    });
-    try {
-      await WebAuth.instance.sendOtp(_e164);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _error = _friendly(e);
-      });
-      return;
-    }
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
       _otpStep = true;
     });
-    _startCountdown();
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _otpFocus.requestFocus(),
     );
@@ -139,7 +107,7 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
     if (_otp.text.length != 6 || _busy) return;
     setState(() => _busy = true);
     try {
-      await WebAuth.instance.verifyOtp(
+      await WebAuth.instance.codeLogin(
         phone: _e164,
         code: _otp.text,
         keepSignedIn: widget.keepSignedIn,
@@ -151,23 +119,10 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = e is String ? e : 'Invalid or expired code, please try again.';
+        _error = e is String ? e : 'That code did not work. Try again.';
       });
       _otp.clear();
     }
-  }
-
-  String _friendly(Object e) {
-    final msg = e is AuthException ? e.message.toLowerCase() : '';
-    if (msg.contains('signups not allowed') ||
-        msg.contains('user not found') ||
-        msg.contains('otp_disabled')) {
-      return 'No SchatzApp account uses this number. Sign up in the mobile app first.';
-    }
-    if (msg.contains('rate') || msg.contains('seconds')) {
-      return 'Please wait a moment before requesting another code.';
-    }
-    return "Couldn't send the code. Check the number and try again.";
   }
 
   Future<void> _pickCountry() async {
@@ -314,7 +269,7 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
                     LengthLimitingTextInputFormatter(15),
                   ],
                   onChanged: (_) => setState(() => _error = null),
-                  onSubmitted: (_) => _getOtp(),
+                  onSubmitted: (_) => _continue(),
                   style: const TextStyle(fontSize: 17, letterSpacing: 0.5),
                   decoration: InputDecoration(
                     hintText: '---  ---- -----',
@@ -343,7 +298,7 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
         const SizedBox(height: 14),
         _KeepRow(value: widget.keepSignedIn, onChanged: widget.onKeepSignedIn),
         const SizedBox(height: 18),
-        _BigButton(label: 'Get OTP', busy: _busy, onTap: _getOtp),
+        _BigButton(label: 'Continue', busy: _busy, onTap: _continue),
         const SizedBox(height: 14),
         TextButton(
           onPressed: widget.onHelp,
@@ -365,7 +320,11 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
     final n = _otp.text.length;
     return Column(
       children: [
-        _title('Verify Mobile', 'Enter OTP sent to $_fullNumber'),
+        _title(
+          'Enter the code from your phone',
+          'On your phone, open SchatzApp, go to Linked Devices and tap '
+              '"Link with code". Enter the 6-digit code for $_fullNumber.',
+        ),
         const SizedBox(height: 28),
         GestureDetector(
           onTap: () => _otpFocus.requestFocus(),
@@ -439,45 +398,10 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
           },
         ),
         const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              "Didn't receive OTP? ",
-              style: TextStyle(color: AppColors.body),
-            ),
-            if (_resendIn > 0)
-              Text(
-                'Resend code in ${_resendIn}s',
-                style: const TextStyle(
-                  color: AppColors.meta,
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            else
-              InkWell(
-                onTap: () async {
-                  _otp.clear();
-                  try {
-                    await WebAuth.instance.sendOtp(_e164);
-                    if (!mounted) return;
-                    _startCountdown();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('New code sent to $_fullNumber')),
-                    );
-                  } catch (e) {
-                    if (mounted) setState(() => _error = _friendly(e));
-                  }
-                },
-                child: const Text(
-                  'Resend code',
-                  style: TextStyle(
-                    color: AppColors.brandDeep,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-          ],
+        const Text(
+          'Codes last 2 minutes and work once. No SMS is sent.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppColors.meta, fontSize: 13.5),
         ),
       ],
     );

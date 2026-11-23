@@ -138,34 +138,24 @@ class WebAuth extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
-  // Phone number login (same Supabase OTP as the mobile app)
+  // Phone number + code login (no SMS): the code comes from the phone app
+  // (Linked Devices > Link with code), so there is no Twilio cost.
   // -------------------------------------------------------------------------
 
-  /// Sends the SMS code. Existing accounts only: the web cannot sign up.
-  Future<void> sendOtp(String phone) async {
-    await _sb.auth.signInWithOtp(phone: phone, shouldCreateUser: false);
-  }
-
-  /// Verifies the code, then registers this browser as a linked device.
+  /// Signs in with the phone number and the 6-digit code shown in the app.
   /// Throws a readable message on failure.
-  Future<void> verifyOtp({
+  Future<void> codeLogin({
     required String phone,
     required String code,
     required bool keepSignedIn,
   }) async {
-    final res = await _sb.auth.verifyOTP(
-      phone: phone,
-      token: code,
-      type: OtpType.sms,
-    );
-    if (res.session == null) {
-      throw 'Invalid or expired code, please try again.';
-    }
     final d = DeviceInfo.current();
     Map<String, dynamic> r;
     try {
       r = await _call({
-        'action': 'register',
+        'action': 'code_login',
+        'phone': phone,
+        'code': code,
         'device_name': d.deviceName,
         'browser': d.browser,
         'os': d.os,
@@ -176,14 +166,17 @@ class WebAuth extends ChangeNotifier {
       final data = e.details;
       r = data is Map<String, dynamic>
           ? data
-          : {'ok': false, 'message': 'Could not sign in'};
+          : {'ok': false, 'message': 'Could not sign in. Try again.'};
+    } catch (_) {
+      throw 'Could not reach SchatzApp. Check your connection.';
     }
-    if (r['ok'] != true) {
-      try {
-        await _sb.auth.signOut(scope: SignOutScope.local);
-      } catch (_) {}
-      throw (r['message'] as String?) ?? 'Could not sign in';
+    if (r['ok'] != true || r['access_token'] == null) {
+      throw (r['message'] as String?) ?? 'Could not sign in. Try again.';
     }
+    await _sb.auth.setSession(
+      r['refresh_token'] as String,
+      accessToken: r['access_token'] as String,
+    );
     _deviceId = r['device_id'] as String;
     _expiresAt = DateTime.parse(r['device_expires_at'] as String).toLocal();
     await _prefs.setString(_kDeviceId, _deviceId!);

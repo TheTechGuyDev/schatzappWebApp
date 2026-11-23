@@ -8,6 +8,10 @@
 //   reject   (phone, logged in) -> reject the scanned QR
 //   register (web, after phone-number OTP login) -> registers the browser
 //            as a linked device with the same rules as QR login
+//   issue_code (phone, logged in) -> a 6-digit "Link with code" code,
+//            valid 2 minutes, one use, locked after 5 wrong tries
+//   code_login (web, no login) -> phone number + code; returns the web
+//            session exactly like an approved QR (no SMS, no Twilio)
 //
 // Rules: max 7 active web devices per account; web login lasts 7 days
 // ("Keep me signed in") or 24 hours; 4 hours idle logs out (SQL heartbeat
@@ -24,6 +28,8 @@ const MAX_DEVICES = 7;
 const LONG_SESSION_DAYS = 7;
 const SHORT_SESSION_HOURS = 24;
 const IDLE_HOURS = 4;
+const CODE_TTL_SECONDS = 120;
+const CODE_MAX_TRIES = 5;
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -193,10 +199,34 @@ async function poll(body: Record<string, unknown>) {
     return json({ ok: true, status: "device_limit" });
   }
 
-  // Open a separate web session for this user. Phone-number accounts have
-  // no email, so: set a random one-time password, sign in with it once,
-  // then replace it with another random value nobody knows.
-  const { data: u } = await admin.auth.admin.getUserById(claimed.user_id);
+  return await openWebSession(claimed.user_id, {
+    device_name: claimed.device_name,
+    browser: claimed.browser,
+    os: claimed.os,
+    ip_address: claimed.ip_address,
+    location: claimed.location,
+  }, claimed.keep_signed_in, "qr");
+}
+
+type DeviceInfo = {
+  device_name: string | null;
+  browser: string | null;
+  os: string | null;
+  ip_address: string | null;
+  location: string | null;
+};
+
+/** Opens a separate web session for a user and registers the browser as a
+ *  linked device. Phone-number accounts have no email, so: set a random
+ *  one-time password, sign in with it once, then replace it with another
+ *  random value nobody knows. */
+async function openWebSession(
+  userId: string,
+  info: DeviceInfo,
+  keep: boolean,
+  method: "qr" | "phone",
+) {
+  const { data: u } = await admin.auth.admin.getUserById(userId);
   const user = u?.user;
   if (!user) return fail("server_error", "Account not found", 500);
 
@@ -223,9 +253,7 @@ async function poll(body: Record<string, unknown>) {
   const deviceToken = randomToken();
   const expiresAt = new Date(
     Date.now() +
-      (claimed.keep_signed_in
-        ? LONG_SESSION_DAYS * 86400_000
-        : SHORT_SESSION_HOURS * 3600_000),
+      (keep ? LONG_SESSION_DAYS * 86400_000 : SHORT_SESSION_HOURS * 3600_000),
   );
   const { data: device, error: dErr } = await admin
     .from("web_devices")
@@ -233,13 +261,9 @@ async function poll(body: Record<string, unknown>) {
       user_id: user.id,
       device_token_hash: await sha256(deviceToken),
       session_id: sessionIdFromJwt(s.session.access_token),
-      device_name: claimed.device_name,
-      browser: claimed.browser,
-      os: claimed.os,
-      ip_address: claimed.ip_address,
-      location: claimed.location,
-      login_method: "qr",
-      keep_signed_in: claimed.keep_signed_in,
+      ...info,
+      login_method: method,
+      keep_signed_in: keep,
       expires_at: expiresAt.toISOString(),
     })
     .select("id")
@@ -251,10 +275,145 @@ async function poll(body: Record<string, unknown>) {
     status: "approved",
     device_id: device.id,
     device_expires_at: expiresAt.toISOString(),
-    keep_signed_in: claimed.keep_signed_in,
+    keep_signed_in: keep,
     access_token: s.session.access_token,
     refresh_token: s.session.refresh_token,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Link with code (no SMS)
+// ---------------------------------------------------------------------------
+
+/** Uniform random 6-digit code. */
+function sixDigits(): string {
+  const max = Math.floor(0xffffffff / 1_000_000) * 1_000_000;
+  while (true) {
+    const n = crypto.getRandomValues(new Uint32Array(1))[0];
+    if (n < max) return String(n % 1_000_000).padStart(6, "0");
+  }
+}
+
+async function codeHash(userId: string, code: string) {
+  return await sha256(`${userId}:${code}`);
+}
+
+/** Phone (logged in): a fresh code. Any earlier unused code stops working. */
+async function issueCode(req: Request) {
+  const user = await phoneUser(req);
+  if (!user) return fail("unauthorized", "Please log in on your phone", 401);
+
+  if ((await activeDeviceCount(user.id)) >= MAX_DEVICES) {
+    return fail(
+      "device_limit",
+      `You can link up to ${MAX_DEVICES} devices. Remove a device first.`,
+    );
+  }
+
+  await admin
+    .from("web_link_codes")
+    .update({ used_at: new Date().toISOString() })
+    .eq("user_id", user.id)
+    .is("used_at", null);
+
+  const code = sixDigits();
+  const expiresAt = new Date(Date.now() + CODE_TTL_SECONDS * 1000);
+  const { error } = await admin.from("web_link_codes").insert({
+    user_id: user.id,
+    code_hash: await codeHash(user.id, code),
+    expires_at: expiresAt.toISOString(),
+  });
+  if (error) return fail("server_error", "Could not create a code", 500);
+
+  return json({
+    ok: true,
+    code,
+    expires_at: expiresAt.toISOString(),
+    ttl_seconds: CODE_TTL_SECONDS,
+  });
+}
+
+/** The account for a phone number typed on the web (+2348012345678). */
+async function userIdForPhone(raw: unknown): Promise<string | null> {
+  if (typeof raw !== "string") return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 15) return null;
+  const { data } = await admin
+    .from("profiles")
+    .select("id")
+    .in("phone_number", [`+${digits}`, digits])
+    .limit(1);
+  return data && data.length ? (data[0].id as string) : null;
+}
+
+const WRONG_CODE =
+  "That code is wrong or has expired. Get a new code on your phone.";
+
+/** Web (no login): phone number + code. Same session and device rules as
+ *  the QR. Wrong answers never reveal whether the number has an account. */
+async function codeLogin(body: Record<string, unknown>, req: Request) {
+  const code = typeof body.code === "string" ? body.code.trim() : "";
+  if (!/^\d{6}$/.test(code)) return fail("invalid_code", "Enter the 6-digit code");
+
+  const userId = await userIdForPhone(body.phone);
+  if (!userId) return fail("invalid_code", WRONG_CODE);
+
+  const { data: row } = await admin
+    .from("web_link_codes")
+    .select("*")
+    .eq("user_id", userId)
+    .is("used_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!row) return fail("invalid_code", WRONG_CODE);
+
+  if (row.code_hash !== (await codeHash(userId, code))) {
+    const tries = (row.attempts ?? 0) + 1;
+    await admin
+      .from("web_link_codes")
+      .update({
+        attempts: tries,
+        ...(tries >= CODE_MAX_TRIES ? { used_at: new Date().toISOString() } : {}),
+      })
+      .eq("id", row.id);
+    return tries >= CODE_MAX_TRIES
+      ? fail(
+        "locked",
+        "Too many wrong tries. Get a new code on your phone.",
+      )
+      : fail(
+        "invalid_code",
+        `Wrong code. ${CODE_MAX_TRIES - tries} tries left.`,
+      );
+  }
+
+  // Use the code exactly once.
+  const { data: claimed } = await admin
+    .from("web_link_codes")
+    .update({ used_at: new Date().toISOString() })
+    .eq("id", row.id)
+    .is("used_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return fail("invalid_code", WRONG_CODE);
+
+  if ((await activeDeviceCount(userId)) >= MAX_DEVICES) {
+    return fail(
+      "device_limit",
+      `You can link up to ${MAX_DEVICES} devices. Remove a device on your phone first.`,
+    );
+  }
+
+  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim();
+  return await openWebSession(userId, {
+    device_name: clip(body.device_name),
+    browser: clip(body.browser),
+    os: clip(body.os),
+    location: clip(body.location),
+    ip_address: clip(ip, 64),
+  }, body.keep_signed_in !== false, "phone");
 }
 
 async function inspect(body: Record<string, unknown>, req: Request) {
@@ -410,6 +569,10 @@ Deno.serve(async (req) => {
         return await decide(body, req, false);
       case "register":
         return await registerPhoneLogin(body, req);
+      case "issue_code":
+        return await issueCode(req);
+      case "code_login":
+        return await codeLogin(body, req);
       default:
         return fail("bad_request", "Unknown action");
     }
