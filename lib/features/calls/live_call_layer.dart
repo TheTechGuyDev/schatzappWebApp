@@ -60,11 +60,20 @@ class _CallLayerState extends State<CallLayer> {
       children: [
         Positioned.fill(child: widget.child),
         // Not const: these must rebuild on every call change.
-        if (_calls.active)
+        if (_calls.active && !_calls.minimized)
           Positioned.fill(
             child: ListenableBuilder(
               listenable: _calls,
               builder: (_, _) => _LiveCallScreen(tick: DateTime.now()),
+            ),
+          ),
+        if (_calls.active && _calls.minimized)
+          Positioned(
+            right: 24,
+            bottom: 24,
+            child: ListenableBuilder(
+              listenable: _calls,
+              builder: (_, _) => _MiniCall(tick: DateTime.now()),
             ),
           ),
         if (_calls.hasIncoming)
@@ -352,6 +361,27 @@ class _LiveCallScreen extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                  const SizedBox(width: 12),
+                  Tooltip(
+                    message: 'Minimize and keep chatting',
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => c.setMinimized(true),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close_fullscreen_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -439,6 +469,27 @@ class _LiveCallScreen extends StatelessWidget {
                 ),
               ),
 
+            // Video requests (voice calls)
+            if (c.incomingVideoRequest != null || c.myVideoRequestPending)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 112,
+                child: Center(
+                  child: _RequestBanner(
+                    text: c.incomingVideoRequest != null
+                        ? '${c.incomingVideoRequest} wants to switch to video'
+                        : 'Video request sent. Waiting for an answer...',
+                    actions: c.incomingVideoRequest != null
+                        ? [
+                            ('Decline', false, c.declineVideoRequest),
+                            ('Switch to video', true, c.acceptVideoRequest),
+                          ]
+                        : [('Cancel', false, c.cancelVideoRequest)],
+                  ),
+                ),
+              ),
+
             // Controls
             Positioned(
               left: 0,
@@ -497,6 +548,214 @@ class _LiveCallScreen extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RequestBanner extends StatelessWidget {
+  const _RequestBanner({required this.text, required this.actions});
+
+  final String text;
+  final List<(String, bool, Future<void> Function())> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 18,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.videocam_rounded, color: AppColors.accent),
+          const SizedBox(width: 10),
+          Text(
+            text,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              color: AppColors.heading,
+            ),
+          ),
+          const SizedBox(width: 12),
+          for (final (label, primary, onTap) in actions)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: primary
+                  ? FilledButton(
+                      onPressed: onTap,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        shape: const StadiumBorder(),
+                      ),
+                      child: Text(label),
+                    )
+                  : TextButton(
+                      onPressed: onTap,
+                      child: Text(
+                        label,
+                        style: const TextStyle(color: AppColors.body),
+                      ),
+                    ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The call shrunk to a card while the user keeps chatting.
+class _MiniCall extends StatelessWidget {
+  const _MiniCall({required this.tick});
+
+  final DateTime tick;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = CallService.instance;
+    final video = c.peers.where((p) => p.hasVideo).toList();
+    final status = switch (c.phase) {
+      CallPhase.dialing => c.ringing ? 'Ringing...' : 'Calling...',
+      CallPhase.connecting => 'Connecting...',
+      CallPhase.connected => _clockText(c.connectedAt),
+      _ => '',
+    };
+    return Material(
+      elevation: 14,
+      shadowColor: const Color(0x665B1CD3),
+      borderRadius: BorderRadius.circular(20),
+      color: const Color(0xFF1C1033),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: 300,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (video.isNotEmpty)
+              SizedBox(
+                height: 170,
+                child: _VideoSlot(
+                  key: ValueKey('mini-${video.first.uid}'),
+                  slot: 'remote:${video.first.uid}',
+                ),
+              ),
+            InkWell(
+              onTap: () => c.setMinimized(false),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+                child: Row(
+                  children: [
+                    Avatar(
+                      name: c.peerName,
+                      photoUrl: c.peerAvatar,
+                      isGroup: c.isGroup,
+                      size: 40,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            c.peerName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            c.incomingVideoRequest != null
+                                ? 'Wants to switch to video'
+                                : status,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _MiniButton(
+                      icon: c.micOn ? Icons.mic_rounded : Icons.mic_off_rounded,
+                      tip: c.micOn ? 'Mute' : 'Unmute',
+                      active: !c.micOn,
+                      onTap: c.toggleMic,
+                    ),
+                    _MiniButton(
+                      icon: Icons.open_in_full_rounded,
+                      tip: 'Open call',
+                      onTap: () => c.setMinimized(false),
+                    ),
+                    _MiniButton(
+                      icon: Icons.call_end_rounded,
+                      tip: 'End call',
+                      danger: true,
+                      onTap: c.hangUp,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniButton extends StatelessWidget {
+  const _MiniButton({
+    required this.icon,
+    required this.tip,
+    required this.onTap,
+    this.active = false,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String tip;
+  final VoidCallback onTap;
+  final bool active;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Tooltip(
+        message: tip,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: danger
+                  ? const Color(0xFFE53935)
+                  : (active
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.14)),
+            ),
+            child: Icon(
+              icon,
+              size: 19,
+              color: active && !danger ? AppColors.heading : Colors.white,
+            ),
+          ),
         ),
       ),
     );

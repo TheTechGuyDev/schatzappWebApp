@@ -65,14 +65,20 @@ class ChatRepo extends ChangeNotifier {
   }
 
   Future<void> _loadMe() async {
-    try {
-      me = await _sb
-          .from('profiles')
-          .select('id, full_name, username, avatar_url, phone_number')
-          .eq('id', uid!)
-          .maybeSingle();
-      notifyListeners();
-    } catch (_) {}
+    for (final cols in [
+      'id, full_name, username, avatar_url, phone_number',
+      'id, full_name, avatar_url',
+    ]) {
+      try {
+        me = await _sb
+            .from('profiles')
+            .select(cols)
+            .eq('id', uid!)
+            .maybeSingle();
+        if (me != null) break;
+      } catch (_) {}
+    }
+    notifyListeners();
   }
 
   Future<void> refresh() async {

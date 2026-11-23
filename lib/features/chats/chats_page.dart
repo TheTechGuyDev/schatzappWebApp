@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
@@ -56,6 +57,7 @@ class _ChatsPageState extends State<ChatsPage> {
     if (_live) {
       _repo.addListener(_onData);
       _repo.start();
+      _loadLastChat();
     }
   }
 
@@ -69,7 +71,9 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   void _onData() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    if (_restoreId != null) _tryRestore();
   }
 
   void _openFeed(DemoChat c) {
@@ -150,7 +154,34 @@ class _ChatsPageState extends State<ChatsPage> {
     return null;
   }
 
+  static const _lastChatKey = 'web_last_open_chat';
+
+  /// Chat to reopen after a page refresh.
+  String? _restoreId;
+
+  Future<void> _loadLastChat() async {
+    final p = await SharedPreferences.getInstance();
+    _restoreId = p.getString(_lastChatKey);
+    _tryRestore();
+  }
+
+  void _tryRestore() {
+    final id = _restoreId;
+    if (id == null || _selectedId != null || _repo.loading) return;
+    // Locked chats are never reopened without the password gate.
+    final c = _repo.chats.where((x) => x.id == id).firstOrNull;
+    _restoreId = null;
+    if (c != null) _open(c);
+  }
+
+  void _rememberChat(String? id) {
+    SharedPreferences.getInstance().then((p) {
+      id == null ? p.remove(_lastChatKey) : p.setString(_lastChatKey, id);
+    });
+  }
+
   void _open(DemoChat c) {
+    if (_live && !c.isLocked) _rememberChat(c.id);
     setState(() {
       if (_selectedId != c.id) _replyTo = null;
       _selectedId = c.id;
@@ -721,10 +752,13 @@ class _ChatsPageState extends State<ChatsPage> {
             onOpenInfo: () => setState(() => _infoOpen = true),
             onCall: (video) => _call(chat, video),
             onChatTheme: () => _pickTheme(chat),
-            onCloseChat: () => setState(() {
-              _selectedId = null;
-              _infoOpen = false;
-            }),
+            onCloseChat: () {
+              _rememberChat(null);
+              setState(() {
+                _selectedId = null;
+                _infoOpen = false;
+              });
+            },
             onBack: size == ScreenSize.phone
                 ? () => setState(() => _selectedId = null)
                 : null,
@@ -743,11 +777,14 @@ class _ChatsPageState extends State<ChatsPage> {
             onOpenMedia: (m, url) =>
                 _openMedia(chat, _feed?.messages ?? const [], m, url),
             onOpenDocument: (m) => _openDoc(chat, m),
-            onChatRemoved: () => setState(() {
-              _infoOpen = false;
-              _selectedId = null;
-              _replyTo = null;
-            }),
+            onChatRemoved: () {
+              _rememberChat(null);
+              setState(() {
+                _infoOpen = false;
+                _selectedId = null;
+                _replyTo = null;
+              });
+            },
           )
         : null;
 
@@ -1358,12 +1395,12 @@ class _ConversationPaneState extends State<_ConversationPane> {
   void _toBottom({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      final end = _scroll.position.maxScrollExtent;
+      // The list is anchored at the bottom (reverse), so 0 is the newest.
       if (jump) {
-        _scroll.jumpTo(end);
+        _scroll.jumpTo(0);
       } else {
         _scroll.animateTo(
-          end,
+          0,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
@@ -1447,6 +1484,9 @@ class _ConversationPaneState extends State<_ConversationPane> {
                   )
                 : SingleChildScrollView(
                     controller: _scroll,
+                    // Opens at the newest message and stays there while
+                    // photos load above it.
+                    reverse: true,
                     padding: EdgeInsets.fromLTRB(
                       compact ? 8 : 22,
                       14,

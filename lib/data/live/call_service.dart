@@ -48,6 +48,15 @@ class CallService extends ChangeNotifier {
   bool sharing = false;
   List<CallPeer> peers = [];
 
+  /// The call screen is shrunk to a small card so the user can keep chatting.
+  bool minimized = false;
+
+  /// Video request during a voice call (calls.video_request_by, like the
+  /// phone). Name of the person asking, or null.
+  String? incomingVideoRequest;
+  bool myVideoRequestPending = false;
+  String? _lastRequester;
+
   /// Short messages for the call screen (errors, notices).
   final notice = ValueNotifier<String?>(null);
 
@@ -487,6 +496,11 @@ class CallService extends ChangeNotifier {
   }
 
   Future<void> toggleCamera() async {
+    // Voice call: ask the other side first, like the phone.
+    if (!isVideo) {
+      myVideoRequestPending ? await cancelVideoRequest() : await requestVideo();
+      return;
+    }
     final to = !cameraOn;
     final err = await CallBridge.setCamera(to);
     if (err != null) {
@@ -548,11 +562,14 @@ class CallService extends ChangeNotifier {
     try {
       final row = await _sb
           .from('calls')
-          .select('status, ringing_at')
+          .select('status, ringing_at, call_type, video_request_by, is_group')
           .eq('id', id)
           .maybeSingle();
       if (callId != id) return;
       final s = '${row?['status'] ?? ''}';
+      if (row != null && phase == CallPhase.connected) {
+        await _checkVideoRequest(row);
+      }
       if (phase == CallPhase.dialing || phase == CallPhase.connecting) {
         if (row?['ringing_at'] != null && !ringing) {
           ringing = true;
@@ -641,6 +658,122 @@ class CallService extends ChangeNotifier {
     }
   }
 
+  Future<void> _checkVideoRequest(Map<String, dynamic> row) async {
+    final me = _me;
+    final type = '${row['call_type'] ?? ''}';
+    final reqBy = row['video_request_by']?.toString();
+
+    // The call was switched to video (by either side accepting).
+    if (!isVideo && type == 'video') {
+      isVideo = true;
+      myVideoRequestPending = false;
+      incomingVideoRequest = null;
+      _lastRequester = null;
+      if (!cameraOn) {
+        final err = await CallBridge.setCamera(true);
+        if (err == null) {
+          cameraOn = true;
+        } else {
+          notice.value = err;
+        }
+      }
+      notifyListeners();
+      return;
+    }
+
+    // Someone else asked to switch to video.
+    if (reqBy != null && reqBy.isNotEmpty && reqBy != me && !isVideo) {
+      if (_lastRequester != reqBy || incomingVideoRequest == null) {
+        _lastRequester = reqBy;
+        var name = peerName;
+        if (row['is_group'] == true) {
+          try {
+            final p = await _sb
+                .from('profiles')
+                .select('full_name')
+                .eq('id', reqBy)
+                .maybeSingle();
+            final n = '${p?['full_name'] ?? ''}'.trim();
+            name = n.isEmpty ? 'Someone' : n;
+          } catch (_) {
+            name = 'Someone';
+          }
+        }
+        incomingVideoRequest = name;
+        notifyListeners();
+      }
+    } else if (incomingVideoRequest != null) {
+      incomingVideoRequest = null;
+      _lastRequester = null;
+      notifyListeners();
+    }
+
+    // My own request: waiting, accepted (handled above) or declined.
+    if (myVideoRequestPending && (reqBy == null || reqBy.isEmpty)) {
+      myVideoRequestPending = false;
+      notice.value = 'Video request was declined';
+      notifyListeners();
+    } else if (!myVideoRequestPending && reqBy == me && !isVideo) {
+      myVideoRequestPending = true;
+      notifyListeners();
+    }
+  }
+
+  /// Asks the other side to switch this voice call to video.
+  Future<void> requestVideo() async {
+    final me = _me;
+    final id = callId;
+    if (me == null || id == null || myVideoRequestPending) return;
+    try {
+      await _sb.from('calls').update({'video_request_by': me}).eq('id', id);
+      myVideoRequestPending = true;
+      notifyListeners();
+    } catch (_) {
+      notice.value = 'Could not send the video request';
+    }
+  }
+
+  Future<void> cancelVideoRequest() async {
+    final id = callId;
+    if (id == null) return;
+    try {
+      await _sb.from('calls').update({'video_request_by': null}).eq('id', id);
+    } catch (_) {}
+    myVideoRequestPending = false;
+    notifyListeners();
+  }
+
+  Future<void> acceptVideoRequest() async {
+    final id = callId;
+    if (id == null) return;
+    incomingVideoRequest = null;
+    notifyListeners();
+    try {
+      await _sb
+          .from('calls')
+          .update({'call_type': 'video', 'video_request_by': null})
+          .eq('id', id);
+      await _checkVideoRequest({'call_type': 'video'});
+    } catch (_) {
+      notice.value = 'Could not switch to video';
+    }
+  }
+
+  Future<void> declineVideoRequest() async {
+    final id = callId;
+    if (id == null) return;
+    incomingVideoRequest = null;
+    notifyListeners();
+    try {
+      await _sb.from('calls').update({'video_request_by': null}).eq('id', id);
+    } catch (_) {}
+  }
+
+  void setMinimized(bool v) {
+    minimized = v;
+    notifyListeners();
+  }
+
   void _markConnected() {
     CallBridge.tone('stop');
     phase = CallPhase.connected;
@@ -666,6 +799,10 @@ class CallService extends ChangeNotifier {
     cameraOn = false;
     micOn = true;
     peers = [];
+    minimized = false;
+    incomingVideoRequest = null;
+    myVideoRequestPending = false;
+    _lastRequester = null;
     notifyListeners();
   }
 }

@@ -234,7 +234,8 @@ class _Rail extends StatelessWidget {
                           isOnline: true,
                         ),
                       )
-                    : const _UserTile(),
+                    // Not const: must rebuild when the profile loads.
+                    : _UserTile(key: ValueKey(_myName())),
               ),
             ),
           ],
@@ -340,7 +341,7 @@ class _RailItem extends StatelessWidget {
 }
 
 class _UserTile extends StatelessWidget {
-  const _UserTile();
+  const _UserTile({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -430,8 +431,11 @@ class ShellPanel extends StatelessWidget {
 
 /// Signed-in user's name and photo (demo name in the UI preview).
 String _myName() {
-  final n = (ChatRepo.instance.me?['full_name'] as String?)?.trim();
-  if (n != null && n.isNotEmpty) return n;
+  final me = ChatRepo.instance.me;
+  for (final k in ['full_name', 'username', 'phone_number']) {
+    final n = (me?[k] as String?)?.trim();
+    if (n != null && n.isNotEmpty) return n;
+  }
   return WebAuth.instance.isLive ? 'My account' : demoCurrentUserName;
 }
 
