@@ -250,6 +250,8 @@ class CallService extends ChangeNotifier {
       _dialStart = DateTime.now();
       notifyListeners();
       CallBridge.tone('ringback');
+      // Watch the call row from now on (answered, declined, ringing).
+      _startTimers();
 
       final token = await _token(ch, uid);
       if (token == null) {
@@ -267,7 +269,6 @@ class CallService extends ChangeNotifier {
         await hangUp();
         return err;
       }
-      _startTimers();
       return null;
     } catch (_) {
       if (callId != null) await hangUp();
@@ -311,6 +312,7 @@ class CallService extends ChangeNotifier {
         });
       }
       await _sb.from('calls').update({'status': 'answered'}).eq('id', id);
+      _startTimers();
 
       final info = await _sb
           .from('calls')
@@ -335,10 +337,11 @@ class CallService extends ChangeNotifier {
         await hangUp();
         return err;
       }
-      phase = CallPhase.connected;
-      connectedAt = DateTime.now();
+      if (phase == CallPhase.connecting) {
+        phase = CallPhase.connected;
+        connectedAt = DateTime.now();
+      }
       notifyListeners();
-      _startTimers();
       return null;
     } catch (_) {
       _reset();
@@ -550,17 +553,15 @@ class CallService extends ChangeNotifier {
           .maybeSingle();
       if (callId != id) return;
       final s = '${row?['status'] ?? ''}';
-      if (phase == CallPhase.dialing) {
+      if (phase == CallPhase.dialing || phase == CallPhase.connecting) {
         if (row?['ringing_at'] != null && !ringing) {
           ringing = true;
           notifyListeners();
         }
-        if (s == 'answered') {
-          CallBridge.tone('stop');
-          phase = CallPhase.connected;
-          connectedAt = DateTime.now();
-          notifyListeners();
-        } else if (s == 'ringing' &&
+        if (s == 'answered' && phase == CallPhase.dialing) {
+          _markConnected();
+        } else if (phase == CallPhase.dialing &&
+            s == 'ringing' &&
             _dialStart != null &&
             DateTime.now().difference(_dialStart!) >= _dialTimeout) {
           notice.value = 'No answer';
@@ -620,7 +621,12 @@ class CallService extends ChangeNotifier {
               hasVideo: p['hasVideo'] == true,
             ),
         ];
-        notifyListeners();
+        // Someone is in the channel with us: the call is connected.
+        if (peers.isNotEmpty && phase == CallPhase.dialing) {
+          _markConnected();
+        } else {
+          notifyListeners();
+        }
       case 'joined':
         cameraOn = e['camera'] == true;
         notifyListeners();
@@ -633,6 +639,13 @@ class CallService extends ChangeNotifier {
         final s = '${e['state']}';
         if (s == 'RECONNECTING') notice.value = 'Reconnecting...';
     }
+  }
+
+  void _markConnected() {
+    CallBridge.tone('stop');
+    phase = CallPhase.connected;
+    connectedAt ??= DateTime.now();
+    notifyListeners();
   }
 
   void _reset() {

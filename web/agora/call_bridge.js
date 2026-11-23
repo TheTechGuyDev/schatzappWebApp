@@ -47,21 +47,27 @@
 
   function el(id) { return id ? document.getElementById(id) : null; }
 
+  // Plays a track into an element, moving it if it was shown elsewhere.
+  function show(track, node, opts) {
+    if (!track || !node) return;
+    try {
+      if (track.isPlaying) track.stop();
+      track.play(node, opts);
+    } catch (e) {}
+  }
+
   function playLocal() {
     var track = state.screen || state.cam;
-    var node = el(state.slots.local);
-    if (track && node) {
-      try { track.play(node, { fit: 'cover', mirror: !state.screen }); } catch (e) {}
-    }
+    show(track, el(state.slots.local), {
+      fit: state.screen ? 'contain' : 'cover',
+      mirror: !state.screen,
+    });
   }
 
   function playRemote(uid) {
     var r = state.remotes[uid];
     if (!r || !r.video) return;
-    var node = el(state.slots['remote:' + uid]) || el(state.slots.remote);
-    if (node) {
-      try { r.video.play(node, { fit: 'contain' }); } catch (e) {}
-    }
+    show(r.video, el(state.slots['remote:' + uid]) || el(state.slots.remote), { fit: 'contain' });
   }
 
   function remoteList() {

@@ -59,9 +59,23 @@ class _CallLayerState extends State<CallLayer> {
     return Stack(
       children: [
         Positioned.fill(child: widget.child),
-        if (_calls.active) const Positioned.fill(child: _LiveCallScreen()),
+        // Not const: these must rebuild on every call change.
+        if (_calls.active)
+          Positioned.fill(
+            child: ListenableBuilder(
+              listenable: _calls,
+              builder: (_, _) => _LiveCallScreen(tick: DateTime.now()),
+            ),
+          ),
         if (_calls.hasIncoming)
-          const Positioned(right: 24, bottom: 24, child: _IncomingCard()),
+          Positioned(
+            right: 24,
+            bottom: 24,
+            child: ListenableBuilder(
+              listenable: _calls,
+              builder: (_, _) => _IncomingCard(name: _calls.peerName),
+            ),
+          ),
       ],
     );
   }
@@ -77,7 +91,9 @@ String _clockText(DateTime? since) {
 }
 
 class _IncomingCard extends StatelessWidget {
-  const _IncomingCard();
+  const _IncomingCard({required this.name});
+
+  final String name;
 
   @override
   Widget build(BuildContext context) {
@@ -205,8 +221,10 @@ class _PillButton extends StatelessWidget {
 }
 
 /// A `div` element the call bridge draws a video into.
+int _slotSeq = 0;
+
 class _VideoSlot extends StatelessWidget {
-  const _VideoSlot({required this.slot});
+  const _VideoSlot({super.key, required this.slot});
 
   /// 'local' or 'remote:' followed by the Agora uid.
   final String slot;
@@ -214,11 +232,10 @@ class _VideoSlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return HtmlElementView.fromTagName(
-      key: ValueKey(slot),
       tagName: 'div',
       onElementCreated: (e) {
         final div = e as web.HTMLDivElement;
-        final id = 'sc-${slot.replaceAll(':', '-')}';
+        final id = 'sc-${slot.replaceAll(':', '-')}-${_slotSeq++}';
         div
           ..id = id
           ..style.width = '100%'
@@ -235,7 +252,10 @@ class _VideoSlot extends StatelessWidget {
 }
 
 class _LiveCallScreen extends StatelessWidget {
-  const _LiveCallScreen();
+  const _LiveCallScreen({required this.tick});
+
+  /// Changes every rebuild so the timer and controls always refresh.
+  final DateTime tick;
 
   @override
   Widget build(BuildContext context) {
@@ -254,7 +274,8 @@ class _LiveCallScreen extends StatelessWidget {
             : _clockText(c.connectedAt),
       _ => '',
     };
-    final showLocal = c.cameraOn || c.sharing;
+    // While presenting, the screen preview is the big view instead.
+    final showLocal = c.cameraOn && !c.sharing;
 
     return Material(
       color: Colors.transparent,
@@ -268,12 +289,40 @@ class _LiveCallScreen extends StatelessWidget {
         ),
         child: Stack(
           children: [
+            // Presenting: your shared screen fills the view (like Meet).
+            if (c.sharing)
+              Positioned.fill(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 64, 20, 116),
+                  child: _PresentingView(peerName: c.peerName),
+                ),
+              )
             // Remote video
-            if (videoPeers.isNotEmpty)
+            else if (videoPeers.isNotEmpty)
               Positioned.fill(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 64, 20, 116),
                   child: _VideoGrid(peers: videoPeers),
+                ),
+              ),
+
+            // While presenting, the other person's video sits in a corner.
+            if (c.sharing && videoPeers.isNotEmpty)
+              Positioned(
+                left: 36,
+                bottom: 132,
+                child: Container(
+                  width: 240,
+                  height: 150,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _VideoSlot(
+                    key: ValueKey('pip-${videoPeers.first.uid}'),
+                    slot: 'remote:${videoPeers.first.uid}',
+                  ),
                 ),
               ),
 
@@ -295,7 +344,7 @@ class _LiveCallScreen extends StatelessWidget {
                     style: TextStyle(color: Colors.white54, fontSize: 13),
                   ),
                   const Spacer(),
-                  if (videoPeers.isNotEmpty)
+                  if (videoPeers.isNotEmpty || c.sharing)
                     Text(
                       '${c.peerName}  ·  $status',
                       style: const TextStyle(
@@ -308,7 +357,7 @@ class _LiveCallScreen extends StatelessWidget {
             ),
 
             // Voice view (or video before anyone's camera is on)
-            if (videoPeers.isEmpty)
+            if (videoPeers.isEmpty && !c.sharing)
               Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -368,12 +417,14 @@ class _LiveCallScreen extends StatelessWidget {
                   clipBehavior: Clip.antiAlias,
                   child: Stack(
                     children: [
-                      const Positioned.fill(child: _VideoSlot(slot: 'local')),
+                      const Positioned.fill(
+                        child: _VideoSlot(key: ValueKey('self'), slot: 'local'),
+                      ),
                       Positioned(
                         left: 10,
                         bottom: 8,
                         child: Text(
-                          c.sharing ? 'Sharing your screen' : 'You',
+                          'You',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12.5,
@@ -452,6 +503,66 @@ class _LiveCallScreen extends StatelessWidget {
   }
 }
 
+class _PresentingView extends StatelessWidget {
+  const _PresentingView({required this.peerName});
+
+  final String peerName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.present_to_all_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  'You are presenting to $peerName',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton(
+                onPressed: () => CallService.instance.toggleScreen(),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppColors.heading,
+                  shape: const StadiumBorder(),
+                ),
+                child: const Text('Stop presenting'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: const _VideoSlot(key: ValueKey('present'), slot: 'local'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _VideoGrid extends StatelessWidget {
   const _VideoGrid({required this.peers});
 
@@ -461,7 +572,10 @@ class _VideoGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget tile(CallPeer p) => ClipRRect(
       borderRadius: BorderRadius.circular(20),
-      child: _VideoSlot(slot: 'remote:${p.uid}'),
+      child: _VideoSlot(
+        key: ValueKey('grid-${p.uid}'),
+        slot: 'remote:${p.uid}',
+      ),
     );
     if (peers.length == 1) return tile(peers.first);
     final cols = peers.length <= 4 ? 2 : 3;
