@@ -343,7 +343,26 @@ async function userIdForPhone(raw: unknown): Promise<string | null> {
     .select("id")
     .in("phone_number", [`+${digits}`, digits])
     .limit(1);
-  return data && data.length ? (data[0].id as string) : null;
+  if (data && data.length) return data[0].id as string;
+
+  // Numbers saved in another format (spaces, local 0...): match on the last
+  // 9 digits, and only when exactly one account has them.
+  const tail = digits.slice(-9);
+  const { data: near } = await admin
+    .from("profiles")
+    .select("id, phone_number")
+    .like("phone_number", `%${tail}`)
+    .limit(5);
+  const same = (near ?? []).filter((p) =>
+    String(p.phone_number ?? "").replace(/\D/g, "").endsWith(tail)
+  );
+  if (same.length === 1) return same[0].id as string;
+
+  // Last resort: the sign-in phone on the account itself (digits, no "+").
+  const { data: viaAuth } = await admin.rpc("web_user_id_for_phone", {
+    p_digits: digits,
+  });
+  return typeof viaAuth === "string" ? viaAuth : null;
 }
 
 const WRONG_CODE =

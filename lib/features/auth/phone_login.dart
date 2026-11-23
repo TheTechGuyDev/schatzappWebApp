@@ -49,7 +49,10 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
   void initState() {
     super.initState();
     _otp.addListener(() {
-      if (_error != null) setState(() => _error = null);
+      // Redraw the boxes on every digit; typing again hides the old error.
+      setState(() {
+        if (_otp.text.isNotEmpty) _error = null;
+      });
       if (_otp.text.length == 6) _verify();
     });
     _loadCountries();
@@ -117,11 +120,11 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
       widget.onSignedIn();
     } catch (e) {
       if (!mounted) return;
+      _otp.clear();
       setState(() {
         _busy = false;
         _error = e is String ? e : 'That code did not work. Try again.';
       });
-      _otp.clear();
     }
   }
 
