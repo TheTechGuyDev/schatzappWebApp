@@ -6,6 +6,8 @@
 //   inspect  (phone, logged in) -> device details to show before approving
 //   approve  (phone, logged in) -> approve the scanned QR
 //   reject   (phone, logged in) -> reject the scanned QR
+//   register (web, after phone-number OTP login) -> registers the browser
+//            as a linked device with the same rules as QR login
 //
 // Rules: max 7 active web devices per account; web login lasts 7 days
 // ("Keep me signed in") or 24 hours; 4 hours idle logs out (SQL heartbeat
@@ -309,6 +311,78 @@ async function decide(
   return json({ ok: true, status: approve ? "approved" : "rejected" });
 }
 
+/** Phone-number login on the web: the browser already has a session from
+ *  the OTP. Register it as a linked device (same limits as QR), or end the
+ *  session if the account already has 7 devices. */
+async function registerPhoneLogin(body: Record<string, unknown>, req: Request) {
+  const user = await phoneUser(req);
+  if (!user) return fail("unauthorized", "Please log in again", 401);
+  const jwt = (req.headers.get("Authorization") ?? "").replace(
+    /^Bearer\s+/i,
+    "",
+  );
+  const sessionId = sessionIdFromJwt(jwt);
+
+  // Same browser session registering twice: return the existing device.
+  if (sessionId) {
+    const { data: existing } = await admin
+      .from("web_devices")
+      .select("id, expires_at, keep_signed_in")
+      .eq("user_id", user.id)
+      .eq("session_id", sessionId)
+      .is("revoked_at", null)
+      .maybeSingle();
+    if (existing) {
+      return json({
+        ok: true,
+        device_id: existing.id,
+        device_expires_at: existing.expires_at,
+        keep_signed_in: existing.keep_signed_in,
+      });
+    }
+  }
+
+  if ((await activeDeviceCount(user.id)) >= MAX_DEVICES) {
+    // The web signs this session out when it gets device_limit.
+    return fail(
+      "device_limit",
+      `You can link up to ${MAX_DEVICES} devices. Remove a device on your phone first.`,
+    );
+  }
+
+  const keep = body.keep_signed_in !== false;
+  const expiresAt = new Date(
+    Date.now() +
+      (keep ? LONG_SESSION_DAYS * 86400_000 : SHORT_SESSION_HOURS * 3600_000),
+  );
+  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim();
+  const { data: device, error } = await admin
+    .from("web_devices")
+    .insert({
+      user_id: user.id,
+      device_token_hash: await sha256(randomToken()),
+      session_id: sessionId,
+      device_name: clip(body.device_name),
+      browser: clip(body.browser),
+      os: clip(body.os),
+      location: clip(body.location),
+      ip_address: clip(ip, 64),
+      login_method: "phone",
+      keep_signed_in: keep,
+      expires_at: expiresAt.toISOString(),
+    })
+    .select("id")
+    .single();
+  if (error) return fail("server_error", "Could not register device", 500);
+
+  return json({
+    ok: true,
+    device_id: device.id,
+    device_expires_at: expiresAt.toISOString(),
+    keep_signed_in: keep,
+  });
+}
+
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (req) => {
@@ -334,6 +408,8 @@ Deno.serve(async (req) => {
         return await decide(body, req, true);
       case "reject":
         return await decide(body, req, false);
+      case "register":
+        return await registerPhoneLogin(body, req);
       default:
         return fail("bad_request", "Unknown action");
     }

@@ -5,6 +5,7 @@ import 'auth/web_auth.dart';
 import 'config.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
+import 'widgets/resizable_width.dart';
 import 'widgets/ui_scale.dart';
 
 Future<void> main() async {
@@ -15,6 +16,9 @@ Future<void> main() async {
     headers: {'X-Client-Info': 'schatzapp-web'},
   );
   await WebAuth.instance.init();
+  await PanelWidth.load();
+  // Local UI checks only (never set on the published build).
+  if (const bool.fromEnvironment('UI_PREVIEW')) WebAuth.instance.enterDemo();
   runApp(const SchatzWebApp());
 }
 

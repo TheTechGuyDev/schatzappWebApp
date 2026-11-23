@@ -4,6 +4,7 @@ import '../../data/demo_data.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/resizable_width.dart';
 import '../../widgets/brand_logo.dart';
 import '../../widgets/sunset_painter.dart';
 import '../calls/call_screen.dart';
@@ -32,6 +33,7 @@ class _ChatsPageState extends State<ChatsPage> {
   final Set<String> _readIds = {};
   final Map<String, String> _themes = {};
   bool _infoOpen = false;
+  final _listWidth = PanelWidth('chats_list_width', 350);
 
   /// Private Chats view is open (after the app password gate).
   bool _privateMode = false;
@@ -272,12 +274,15 @@ class _ChatsPageState extends State<ChatsPage> {
       return info ?? (chat == null ? list : conversation);
     }
 
-    final listWidth = size == ScreenSize.desktop ? 350.0 : 310.0;
     const gap = 12.0;
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 14, 14, 14),
       child: LayoutBuilder(
         builder: (context, c) {
+          // Chat list width is dragged by the user; the conversation keeps
+          // at least 420px.
+          final maxList = (c.maxWidth - gap - 420).clamp(280.0, 720.0);
+          final listWidth = _listWidth.value.clamp(280.0, maxList);
           // Three cards when there is room; otherwise the info panel takes
           // the conversation's place until it is closed.
           final remaining = c.maxWidth - listWidth - gap;
@@ -290,7 +295,14 @@ class _ChatsPageState extends State<ChatsPage> {
                 width: listWidth,
                 child: ShellPanel(child: list),
               ),
-              const SizedBox(width: gap),
+              ResizeHandle(
+                width: gap,
+                onDrag: (dx) => setState(
+                  () => _listWidth.set((listWidth + dx).clamp(280.0, maxList)),
+                ),
+                onDoubleTap: () =>
+                    setState(() => _listWidth.set(_listWidth.initial)),
+              ),
               if (info == null)
                 Expanded(child: ShellPanel(child: conversation))
               else if (threeColumns) ...[

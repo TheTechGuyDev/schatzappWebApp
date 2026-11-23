@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../theme/app_theme.dart';
@@ -173,7 +174,7 @@ class SearchField extends StatelessWidget {
 }
 
 /// Filter chip row (All / Unread / Groups / Archived and the call filters).
-class FilterChips<T> extends StatelessWidget {
+class FilterChips<T> extends StatefulWidget {
   const FilterChips({
     super.key,
     required this.values,
@@ -192,47 +193,99 @@ class FilterChips<T> extends StatelessWidget {
   final bool filledInactive;
 
   @override
+  State<FilterChips<T>> createState() => _FilterChipsState<T>();
+}
+
+/// Scrolls sideways with the mouse wheel, by dragging, or with the thin
+/// scrollbar, so no chip is ever cut off.
+class _FilterChipsState<T> extends State<FilterChips<T>> {
+  final _scroll = ScrollController();
+
+  List<T> get values => widget.values;
+  List<String> get labels => widget.labels;
+  T get selected => widget.selected;
+  ValueChanged<T> get onSelected => widget.onSelected;
+  bool get filledInactive => widget.filledInactive;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (var i = 0; i < values.length; i++)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: () => onSelected(values[i]),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: EdgeInsets.symmetric(
-                    horizontal: filledInactive ? 22 : 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: values[i] == selected
-                        ? AppColors.accent
-                        : (filledInactive
-                              ? const Color(0xFFF1EEF6)
-                              : Colors.transparent),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    labels[i],
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: values[i] == selected
-                          ? FontWeight.w600
-                          : FontWeight.w500,
-                      color: values[i] == selected
-                          ? Colors.white
-                          : AppColors.body,
+    return Listener(
+      onPointerSignal: (e) {
+        if (e is PointerScrollEvent && _scroll.hasClients) {
+          final p = _scroll.position;
+          final delta = e.scrollDelta.dx != 0
+              ? e.scrollDelta.dx
+              : e.scrollDelta.dy;
+          _scroll.jumpTo(
+            (p.pixels + delta).clamp(p.minScrollExtent, p.maxScrollExtent),
+          );
+        }
+      },
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(
+          dragDevices: {
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.touch,
+            PointerDeviceKind.trackpad,
+          },
+        ),
+        child: Scrollbar(
+          controller: _scroll,
+          thickness: 3,
+          radius: const Radius.circular(3),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: SingleChildScrollView(
+              controller: _scroll,
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < values.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => onSelected(values[i]),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: filledInactive ? 22 : 16,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: values[i] == selected
+                                ? AppColors.accent
+                                : (filledInactive
+                                      ? const Color(0xFFF1EEF6)
+                                      : Colors.transparent),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            labels[i],
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: values[i] == selected
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: values[i] == selected
+                                  ? Colors.white
+                                  : AppColors.body,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
+                ],
               ),
             ),
-        ],
+          ),
+        ),
       ),
     );
   }

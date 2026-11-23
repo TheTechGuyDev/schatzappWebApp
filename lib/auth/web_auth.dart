@@ -132,6 +132,81 @@ class WebAuth extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
+  // Phone number login (same Supabase OTP as the mobile app)
+  // -------------------------------------------------------------------------
+
+  /// Sends the SMS code. Existing accounts only: the web cannot sign up.
+  Future<void> sendOtp(String phone) async {
+    await _sb.auth.signInWithOtp(phone: phone, shouldCreateUser: false);
+  }
+
+  /// Verifies the code, then registers this browser as a linked device.
+  /// Throws a readable message on failure.
+  Future<void> verifyOtp({
+    required String phone,
+    required String code,
+    required bool keepSignedIn,
+  }) async {
+    final res = await _sb.auth.verifyOTP(
+      phone: phone,
+      token: code,
+      type: OtpType.sms,
+    );
+    if (res.session == null) {
+      throw 'Invalid or expired code, please try again.';
+    }
+    final d = DeviceInfo.current();
+    Map<String, dynamic> r;
+    try {
+      r = await _call({
+        'action': 'register',
+        'device_name': d.deviceName,
+        'browser': d.browser,
+        'os': d.os,
+        'location': d.location,
+        'keep_signed_in': keepSignedIn,
+      });
+    } on FunctionException catch (e) {
+      final data = e.details;
+      r = data is Map<String, dynamic>
+          ? data
+          : {'ok': false, 'message': 'Could not sign in'};
+    }
+    if (r['ok'] != true) {
+      try {
+        await _sb.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {}
+      throw (r['message'] as String?) ?? 'Could not sign in';
+    }
+    _deviceId = r['device_id'] as String;
+    _expiresAt = DateTime.parse(r['device_expires_at'] as String).toLocal();
+    await _prefs.setString(_kDeviceId, _deviceId!);
+    await _prefs.setString(_kExpires, _expiresAt!.toIso8601String());
+    demoMode = false;
+    logoutReason = null;
+    _markActive(save: true);
+    _start();
+    notifyListeners();
+  }
+
+  /// Active countries from the same supported_countries table as the app.
+  Future<List<({String name, String iso, String dial})>> countries() async {
+    final rows = await _sb
+        .from('supported_countries')
+        .select('name, iso_code, dial_code')
+        .eq('is_active', true)
+        .order('name');
+    return [
+      for (final r in rows as List)
+        (
+          name: r['name'] as String,
+          iso: (r['iso_code'] as String).toLowerCase(),
+          dial: (r['dial_code'] as String).replaceAll('+', ''),
+        ),
+    ];
+  }
+
+  // -------------------------------------------------------------------------
   // Activity, heartbeat, remote logout
   // -------------------------------------------------------------------------
 

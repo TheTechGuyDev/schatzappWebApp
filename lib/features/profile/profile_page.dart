@@ -403,13 +403,13 @@ class _AccountPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 26),
-        const _InfoCard(
+        _InfoCard(
           title: 'Personal Details',
           rows: [
             ('Full legal name', 'Chloe Bites'),
             ('Display name', 'Chloe Bites'),
-            ('Date of birth', '12 Mar 1996'),
-            ('Email address', 'chloe@example.com'),
+
+            ('Email address', maskEmail('kestawealth@gmail.com')),
             ('Phone number', '+234 701 000 1234'),
             ('Country of residence', 'Nigeria'),
           ],
@@ -559,4 +559,18 @@ class _InfoCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Hides most of an email on the web, e.g. kes********alth@gmail.com.
+/// Short names keep only the first letter: a****@gmail.com.
+String maskEmail(String email) {
+  final at = email.indexOf('@');
+  if (at <= 0) return email;
+  final name = email.substring(0, at);
+  final domain = email.substring(at);
+  if (name.length <= 4) return '${name[0]}${'*' * 4}$domain';
+  if (name.length <= 7) {
+    return '${name.substring(0, 2)}${'*' * 4}${name.substring(name.length - 1)}$domain';
+  }
+  return '${name.substring(0, 3)}${'*' * 8}${name.substring(name.length - 4)}$domain';
 }

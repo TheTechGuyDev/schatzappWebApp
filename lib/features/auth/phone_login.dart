@@ -4,6 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/brand_logo.dart';
@@ -37,6 +40,7 @@ class PhoneLoginContent extends StatefulWidget {
 
 class _PhoneLoginContentState extends State<PhoneLoginContent> {
   DemoCountry _country = demoCountries.first;
+  List<DemoCountry> _countries = demoCountries;
   final _phone = TextEditingController();
   final _otp = TextEditingController();
   final _otpFocus = FocusNode();
@@ -50,9 +54,29 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
   void initState() {
     super.initState();
     _otp.addListener(() {
-      setState(() => _error = null);
+      if (_error != null) setState(() => _error = null);
       if (_otp.text.length == 6) _verify();
     });
+    _loadCountries();
+  }
+
+  /// Same supported_countries list as the mobile app (falls back to a
+  /// short built-in list if it cannot be loaded).
+  Future<void> _loadCountries() async {
+    try {
+      final rows = await WebAuth.instance.countries();
+      if (!mounted || rows.isEmpty) return;
+      final list = [
+        for (final r in rows) DemoCountry(r.name, r.iso, '+${r.dial}'),
+      ];
+      setState(() {
+        _countries = list;
+        _country = list.firstWhere(
+          (c) => c.code == 'ng',
+          orElse: () => list.first,
+        );
+      });
+    } catch (_) {}
   }
 
   @override
@@ -65,6 +89,10 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
   }
 
   String get _digits => _phone.text.replaceAll(RegExp(r'\D'), '');
+
+  /// E.164 number, same format as the mobile app (leading 0 removed).
+  String get _e164 =>
+      '${_country.dial}${_digits.replaceFirst(RegExp(r'^0+'), '')}';
   String get _fullNumber => '${_country.dial} ${_phone.text.trim()}';
 
   void _startCountdown() {
@@ -86,7 +114,16 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
       _busy = true;
       _error = null;
     });
-    await Future<void>.delayed(const Duration(milliseconds: 700));
+    try {
+      await WebAuth.instance.sendOtp(_e164);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = _friendly(e);
+      });
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -101,16 +138,42 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
   Future<void> _verify() async {
     if (_otp.text.length != 6 || _busy) return;
     setState(() => _busy = true);
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-    if (!mounted) return;
-    setState(() => _busy = false);
-    widget.onSignedIn();
+    try {
+      await WebAuth.instance.verifyOtp(
+        phone: _e164,
+        code: _otp.text,
+        keepSignedIn: widget.keepSignedIn,
+      );
+      if (!mounted) return;
+      setState(() => _busy = false);
+      widget.onSignedIn();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = e is String ? e : 'Invalid or expired code, please try again.';
+      });
+      _otp.clear();
+    }
+  }
+
+  String _friendly(Object e) {
+    final msg = e is AuthException ? e.message.toLowerCase() : '';
+    if (msg.contains('signups not allowed') ||
+        msg.contains('user not found') ||
+        msg.contains('otp_disabled')) {
+      return 'No SchatzApp account uses this number. Sign up in the mobile app first.';
+    }
+    if (msg.contains('rate') || msg.contains('seconds')) {
+      return 'Please wait a moment before requesting another code.';
+    }
+    return "Couldn't send the code. Check the number and try again.";
   }
 
   Future<void> _pickCountry() async {
     final c = await showDialog<DemoCountry>(
       context: context,
-      builder: (_) => _CountryDialog(selected: _country),
+      builder: (_) => _CountryDialog(selected: _country, countries: _countries),
     );
     if (c != null) setState(() => _country = c);
   }
@@ -393,12 +456,18 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
               )
             else
               InkWell(
-                onTap: () {
+                onTap: () async {
                   _otp.clear();
-                  _startCountdown();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('New code sent to $_fullNumber')),
-                  );
+                  try {
+                    await WebAuth.instance.sendOtp(_e164);
+                    if (!mounted) return;
+                    _startCountdown();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('New code sent to $_fullNumber')),
+                    );
+                  } catch (e) {
+                    if (mounted) setState(() => _error = _friendly(e));
+                  }
                 },
                 child: const Text(
                   'Resend code',
@@ -561,12 +630,13 @@ class _FeatureChips extends StatelessWidget {
   }
 }
 
-/// Country list (the mobile app's ListOfCountries dialog). Real data comes
-/// from the supported_countries table in the backend phase.
+/// Country list (the mobile app's ListOfCountries dialog), loaded from the
+/// supported_countries table.
 class _CountryDialog extends StatefulWidget {
-  const _CountryDialog({required this.selected});
+  const _CountryDialog({required this.selected, required this.countries});
 
   final DemoCountry selected;
+  final List<DemoCountry> countries;
 
   @override
   State<_CountryDialog> createState() => _CountryDialogState();
@@ -577,7 +647,7 @@ class _CountryDialogState extends State<_CountryDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final list = demoCountries
+    final list = widget.countries
         .where(
           (c) =>
               _q.isEmpty ||

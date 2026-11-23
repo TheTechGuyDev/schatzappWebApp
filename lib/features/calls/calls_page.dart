@@ -5,6 +5,7 @@ import '../../data/demo_data.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/resizable_width.dart';
 import '../chats/chat_dialogs.dart';
 import 'call_screen.dart';
 
@@ -22,6 +23,7 @@ class _CallsPageState extends State<CallsPage> {
   CallFilter _filter = CallFilter.all;
   String _query = '';
   String? _selectedId = 'c1';
+  final _listWidth = PanelWidth('calls_list_width', 480);
 
   List<DemoCall> get _visible {
     final q = _query.trim().toLowerCase();
@@ -81,25 +83,38 @@ class _CallsPageState extends State<CallsPage> {
       );
     }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          width: size == ScreenSize.desktop ? 530 : 400,
-          child: ShellPanel(
-            margin: const EdgeInsets.fromLTRB(4, 16, 8, 16),
-            color: AppColors.panelBg,
-            child: list,
-          ),
-        ),
-        Expanded(
-          child: ShellPanel(
-            margin: const EdgeInsets.fromLTRB(8, 16, 16, 16),
-            color: const Color(0xFFFAF7FE),
-            child: details,
-          ),
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 16, 16, 16),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          // Calls list width is dragged by the user; details keep 380px.
+          final maxList = (c.maxWidth - 16 - 380).clamp(320.0, 900.0);
+          final w = _listWidth.value.clamp(320.0, maxList);
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: w,
+                child: ShellPanel(color: AppColors.panelBg, child: list),
+              ),
+              ResizeHandle(
+                width: 16,
+                onDrag: (dx) => setState(
+                  () => _listWidth.set((w + dx).clamp(320.0, maxList)),
+                ),
+                onDoubleTap: () =>
+                    setState(() => _listWidth.set(_listWidth.initial)),
+              ),
+              Expanded(
+                child: ShellPanel(
+                  color: const Color(0xFFFAF7FE),
+                  child: details,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

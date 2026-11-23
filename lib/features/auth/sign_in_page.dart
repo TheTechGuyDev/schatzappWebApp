@@ -104,7 +104,7 @@ class _SignInPageState extends State<SignInPage> {
                                 setState(() => _phoneMode = true),
                             onBackToQr: () =>
                                 setState(() => _phoneMode = false),
-                            onSignedIn: () => WebAuth.instance.enterDemo(),
+                            onSignedIn: () {},
                           ),
                         ),
                       ),
