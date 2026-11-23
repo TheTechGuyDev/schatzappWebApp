@@ -3,7 +3,9 @@ import 'package:material_ui/material_ui.dart';
 
 import '../data/demo_data.dart';
 import '../auth/web_auth.dart';
+import '../data/live/call_service.dart';
 import '../data/live/chat_repo.dart';
+import '../features/calls/live_call_layer.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/brand_logo.dart';
@@ -54,7 +56,10 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    if (WebAuth.instance.isLive) ChatRepo.instance.start();
+    if (WebAuth.instance.isLive) {
+      ChatRepo.instance.start();
+      CallService.instance.start();
+    }
   }
 
   int get _index {
@@ -67,60 +72,64 @@ class _AppShellState extends State<AppShell> {
     final size = screenSizeOf(context);
 
     if (size == ScreenSize.phone) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        body: SafeArea(child: widget.child),
-        bottomNavigationBar: NavigationBar(
-          height: 66,
+      return CallLayer(
+        child: Scaffold(
           backgroundColor: Colors.white,
-          indicatorColor: AppColors.accentSoft,
-          selectedIndex: _index,
-          onDestinationSelected: (i) => context.go(_navItems[i].path),
-          destinations: [
-            for (final n in _navItems)
-              NavigationDestination(
-                icon: Badge(
-                  isLabelVisible: n.badge > 0,
-                  label: Text('${n.badge}'),
-                  backgroundColor: AppColors.accent,
-                  child: NavIcon(n.kind, color: AppColors.body, size: 24),
-                ),
-                selectedIcon: Badge(
-                  isLabelVisible: n.badge > 0,
-                  label: Text('${n.badge}'),
-                  backgroundColor: AppColors.accent,
-                  child: NavIcon(
-                    n.kind,
-                    color: AppColors.accent,
-                    size: 24,
-                    active: true,
+          body: SafeArea(child: widget.child),
+          bottomNavigationBar: NavigationBar(
+            height: 66,
+            backgroundColor: Colors.white,
+            indicatorColor: AppColors.accentSoft,
+            selectedIndex: _index,
+            onDestinationSelected: (i) => context.go(_navItems[i].path),
+            destinations: [
+              for (final n in _navItems)
+                NavigationDestination(
+                  icon: Badge(
+                    isLabelVisible: n.badge > 0,
+                    label: Text('${n.badge}'),
+                    backgroundColor: AppColors.accent,
+                    child: NavIcon(n.kind, color: AppColors.body, size: 24),
                   ),
+                  selectedIcon: Badge(
+                    isLabelVisible: n.badge > 0,
+                    label: Text('${n.badge}'),
+                    backgroundColor: AppColors.accent,
+                    child: NavIcon(
+                      n.kind,
+                      color: AppColors.accent,
+                      size: 24,
+                      active: true,
+                    ),
+                  ),
+                  label: n.label,
                 ),
-                label: n.label,
-              ),
-          ],
+            ],
+          ),
         ),
       );
     }
 
     final collapsed = size == ScreenSize.tablet || _collapsed;
-    return Scaffold(
-      backgroundColor: AppColors.railBg,
-      body: Row(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            width: collapsed ? 84 : 244,
-            child: _Rail(
-              collapsed: collapsed,
-              selected: _index,
-              canToggle: size == ScreenSize.desktop,
-              onToggle: () => setState(() => _collapsed = !_collapsed),
+    return CallLayer(
+      child: Scaffold(
+        backgroundColor: AppColors.railBg,
+        body: Row(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              width: collapsed ? 84 : 244,
+              child: _Rail(
+                collapsed: collapsed,
+                selected: _index,
+                canToggle: size == ScreenSize.desktop,
+                onToggle: () => setState(() => _collapsed = !_collapsed),
+              ),
             ),
-          ),
-          Expanded(child: widget.child),
-        ],
+            Expanded(child: widget.child),
+          ],
+        ),
       ),
     );
   }

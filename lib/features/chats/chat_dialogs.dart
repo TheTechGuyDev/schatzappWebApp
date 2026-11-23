@@ -1,6 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../../data/demo_data.dart';
+import '../../platform/web_files.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
 
@@ -135,12 +138,18 @@ class ContactPickerDialog extends StatefulWidget {
     this.multiSelect = false,
     this.actionLabel = 'Add',
     this.exclude = const {},
+    this.load,
   });
 
   final String title;
   final bool multiSelect;
   final String actionLabel;
+
+  /// Contact keys (user ids when live) to leave out.
   final Set<String> exclude;
+
+  /// Loads the user's real contacts. Null uses the preview contacts.
+  final Future<List<DemoContact>> Function()? load;
 
   @override
   State<ContactPickerDialog> createState() => _ContactPickerDialogState();
@@ -149,12 +158,28 @@ class ContactPickerDialog extends StatefulWidget {
 class _ContactPickerDialogState extends State<ContactPickerDialog> {
   String _q = '';
   final Set<String> _picked = {};
+  late List<DemoContact>? _all = widget.load == null ? demoContacts : null;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.load
+        ?.call()
+        .then((c) {
+          if (mounted) setState(() => _all = c);
+        })
+        .catchError((Object _) {
+          if (mounted) setState(() => _error = 'Could not load your contacts.');
+        });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final list = demoContacts
-        .where((c) => c.name != demoCurrentUserName)
-        .where((c) => !widget.exclude.contains(c.name))
+    final all = _all ?? const <DemoContact>[];
+    final list = all
+        .where((c) => c.name != demoCurrentUserName || widget.load != null)
+        .where((c) => !widget.exclude.contains(c.key))
         .where(
           (c) =>
               _q.isEmpty ||
@@ -195,12 +220,21 @@ class _ContactPickerDialogState extends State<ContactPickerDialog> {
             ),
           ),
           Flexible(
-            child: list.isEmpty
+            child: _all == null && _error == null
                 ? const Padding(
                     padding: EdgeInsets.all(30),
+                    child: CircularProgressIndicator(color: AppColors.accent),
+                  )
+                : list.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(30),
                     child: Text(
-                      'No contacts found',
-                      style: TextStyle(color: AppColors.meta),
+                      _error ??
+                          (all.isEmpty
+                              ? 'No contacts yet. Add contacts on your phone.'
+                              : 'No contacts found'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppColors.meta),
                     ),
                   )
                 : ListView.builder(
@@ -209,12 +243,17 @@ class _ContactPickerDialogState extends State<ContactPickerDialog> {
                     itemCount: list.length,
                     itemBuilder: (_, i) {
                       final c = list[i];
-                      final picked = _picked.contains(c.name);
+                      final picked = _picked.contains(c.key);
                       return ListTile(
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        leading: Avatar(name: c.name, color: c.color, size: 44),
+                        leading: Avatar(
+                          name: c.name,
+                          color: c.color,
+                          photoUrl: c.avatarUrl,
+                          size: 44,
+                        ),
                         title: Text(
                           c.name,
                           style: const TextStyle(
@@ -260,11 +299,8 @@ class _ContactPickerDialogState extends State<ContactPickerDialog> {
                     );
                     return;
                   }
-                  Navigator.of(context).pop(
-                    demoContacts
-                        .where((c) => _picked.contains(c.name))
-                        .toList(),
-                  );
+                  Navigator.of(context)
+                      .pop(all.where((c) => _picked.contains(c.key)).toList());
                 },
               ),
             ),
@@ -274,7 +310,7 @@ class _ContactPickerDialogState extends State<ContactPickerDialog> {
   }
 
   void _toggle(DemoContact c) => setState(() {
-    _picked.contains(c.name) ? _picked.remove(c.name) : _picked.add(c.name);
+    _picked.contains(c.key) ? _picked.remove(c.key) : _picked.add(c.key);
   });
 }
 
@@ -282,13 +318,21 @@ class _ContactPickerDialogState extends State<ContactPickerDialog> {
 // Create group
 // ---------------------------------------------------------------------------
 
-typedef NewGroup = ({String name, List<DemoContact> members, bool isPrivate});
+typedef NewGroup = ({
+  String name,
+  List<DemoContact> members,
+  bool isPrivate,
+  Uint8List? photo,
+});
 
 class CreateGroupDialog extends StatefulWidget {
-  const CreateGroupDialog({super.key, this.privateGroup = false});
+  const CreateGroupDialog({super.key, this.privateGroup = false, this.load});
 
   /// True when started from inside Private Chats (private by default).
   final bool privateGroup;
+
+  /// Loads the user's real contacts. Null uses the preview contacts.
+  final Future<List<DemoContact>> Function()? load;
 
   @override
   State<CreateGroupDialog> createState() => _CreateGroupDialogState();
@@ -299,11 +343,53 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
   String _q = '';
   final Set<String> _picked = {};
   late bool _private = widget.privateGroup;
+  late List<DemoContact>? _all = widget.load == null ? demoContacts : null;
+  Uint8List? _photo;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.load
+        ?.call()
+        .then((c) {
+          if (mounted) setState(() => _all = c);
+        })
+        .catchError((Object _) {
+          if (mounted) setState(() => _all = const []);
+        });
+  }
 
   @override
   void dispose() {
     _name.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickPhoto() async {
+    final files = await pickFiles(accept: 'image/*');
+    if (files.isEmpty) return;
+    final f = files.first;
+    if (f.bytes.length > 5 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Group photos must be under 5 MB.')),
+        );
+      }
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final small = await resizeImage(
+        f.bytes,
+        'image/jpeg',
+        maxDim: 500,
+        quality: 0.8,
+      );
+      if (mounted) setState(() => _photo = small);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _create() {
@@ -317,15 +403,18 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
     }
     Navigator.of(context).pop<NewGroup>((
       name: _name.text.trim(),
-      members: demoContacts.where((c) => _picked.contains(c.name)).toList(),
+      members: (_all ?? const <DemoContact>[])
+          .where((c) => _picked.contains(c.key))
+          .toList(),
       isPrivate: _private,
+      photo: _photo,
     ));
   }
 
   @override
   Widget build(BuildContext context) {
-    final list = demoContacts
-        .where((c) => c.name != demoCurrentUserName)
+    final list = (_all ?? const <DemoContact>[])
+        .where((c) => c.name != demoCurrentUserName || widget.load != null)
         .where((c) => _q.isEmpty || c.name.toLowerCase().contains(_q))
         .toList();
     return DialogShell(
@@ -339,9 +428,7 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
             // Group photo
             InkWell(
               borderRadius: BorderRadius.circular(16),
-              onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Photo upload is coming soon.')),
-              ),
+              onTap: _busy ? null : _pickPhoto,
               child: Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -349,29 +436,36 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFE6DAFA)),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
                     CircleAvatar(
                       radius: 26,
                       backgroundColor: AppColors.accentSoft,
-                      child: Icon(
-                        Icons.add_a_photo_outlined,
-                        color: AppColors.accent,
-                      ),
+                      backgroundImage: _photo == null
+                          ? null
+                          : MemoryImage(_photo!),
+                      child: _photo != null
+                          ? null
+                          : const Icon(
+                              Icons.add_a_photo_outlined,
+                              color: AppColors.accent,
+                            ),
                     ),
-                    SizedBox(width: 14),
+                    const SizedBox(width: 14),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Add Group Photo',
+                          _photo == null
+                              ? 'Add Group Photo'
+                              : 'Change Group Photo',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
                             color: AppColors.heading,
                           ),
                         ),
-                        SizedBox(height: 2),
-                        Text(
+                        const SizedBox(height: 2),
+                        const Text(
                           'JPG, PNG or GIF, Max 5MB',
                           style: TextStyle(fontSize: 13, color: AppColors.meta),
                         ),
@@ -460,13 +554,34 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
               ),
             ),
             const SizedBox(height: 6),
+            if (_all == null)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(
+                  child: CircularProgressIndicator(color: AppColors.accent),
+                ),
+              )
+            else if (list.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text(
+                  'No contacts found',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.meta),
+                ),
+              ),
             for (final c in list)
               CheckboxListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                value: _picked.contains(c.name),
+                value: _picked.contains(c.key),
                 activeColor: AppColors.accent,
                 controlAffinity: ListTileControlAffinity.trailing,
-                secondary: Avatar(name: c.name, color: c.color, size: 40),
+                secondary: Avatar(
+                  name: c.name,
+                  color: c.color,
+                  photoUrl: c.avatarUrl,
+                  size: 40,
+                ),
                 title: Text(
                   c.name,
                   style: const TextStyle(
@@ -475,13 +590,13 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                   ),
                 ),
                 onChanged: (_) => setState(() {
-                  _picked.contains(c.name)
-                      ? _picked.remove(c.name)
-                      : _picked.add(c.name);
+                  _picked.contains(c.key)
+                      ? _picked.remove(c.key)
+                      : _picked.add(c.key);
                 }),
               ),
             const SizedBox(height: 14),
-            _PrimaryButton(label: 'Create', onTap: _create),
+            _PrimaryButton(label: 'Create', onTap: _busy ? null : _create),
           ],
         ),
       ),

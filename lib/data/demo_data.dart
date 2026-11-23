@@ -99,7 +99,31 @@ class DemoMessage {
     this.replyTo,
     this.isEdited = false,
     this.isForwarded = false,
+    this.senderId,
+    this.isStarred = false,
+    this.isPinned = false,
+    this.myReaction,
+    this.replyToId,
+    this.replyLabel,
+    this.raw = const {},
   });
+
+  /// Author (live only).
+  final String? senderId;
+  final bool isStarred;
+  final bool isPinned;
+
+  /// The emoji this user reacted with, if any.
+  final String? myReaction;
+  final String? replyToId;
+
+  /// "You" or the quoted person's name.
+  final String? replyLabel;
+
+  /// The database row (live only), used to forward a message as it is.
+  final Map<String, dynamic> raw;
+
+  bool get isMedia => kind == MessageKind.image || kind == MessageKind.video;
 
   final String text;
   final String time;
@@ -268,6 +292,12 @@ class DemoCall {
     this.isVideo = true,
     this.isOnline = true,
     this.avatarColor = const Color(0xFF8A6A55),
+    this.avatarUrl,
+    this.conversationId,
+    this.otherUserId,
+    this.isGroup = false,
+    this.joinedCount = 0,
+    this.live = false,
   });
 
   final String id;
@@ -278,7 +308,15 @@ class DemoCall {
   final String? duration;
   final bool isVideo;
   final bool isOnline;
-  final Color avatarColor;
+  final Color? avatarColor;
+
+  // Live call log only.
+  final String? avatarUrl;
+  final String? conversationId;
+  final String? otherUserId;
+  final bool isGroup;
+  final int joinedCount;
+  final bool live;
 
   String get label => switch (direction) {
     CallDirection.incoming => 'Incoming',
@@ -465,11 +503,24 @@ const demoPrivateChats = <DemoChat>[
 ];
 
 class DemoContact {
-  const DemoContact(this.name, this.phone, [this.color]);
+  const DemoContact(
+    this.name,
+    this.phone, [
+    this.color,
+    this.userId,
+    this.avatarUrl,
+  ]);
 
   final String name;
   final String phone;
   final Color? color;
+
+  /// Live contacts only.
+  final String? userId;
+  final String? avatarUrl;
+
+  /// Stable key for selection.
+  String get key => userId ?? name;
 }
 
 const demoContacts = <DemoContact>[

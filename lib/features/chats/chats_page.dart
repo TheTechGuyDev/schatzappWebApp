@@ -1,9 +1,12 @@
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
+import '../../data/live/call_service.dart';
 import '../../data/live/chat_repo.dart';
 import '../../data/live/conversation_feed.dart';
+import '../../platform/web_files.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
@@ -13,6 +16,8 @@ import '../calls/call_screen.dart';
 import 'chat_dialogs.dart';
 import 'composer.dart';
 import 'contact_info_panel.dart';
+import 'media_viewer.dart';
+import 'message_actions.dart';
 import 'message_bubble.dart';
 
 /// Chats tab (UI image 2). Live data from the same Supabase tables as the
@@ -45,6 +50,9 @@ class _ChatsPageState extends State<ChatsPage> {
   @override
   void initState() {
     super.initState();
+    // Right-click opens the message menu (text fields get Flutter's own
+    // Cut / Copy / Paste menu instead of the browser's).
+    BrowserContextMenu.disableContextMenu();
     if (_live) {
       _repo.addListener(_onData);
       _repo.start();
@@ -53,6 +61,7 @@ class _ChatsPageState extends State<ChatsPage> {
 
   @override
   void dispose() {
+    BrowserContextMenu.enableContextMenu();
     _repo.removeListener(_onData);
     _feed?.removeListener(_onData);
     _feed?.dispose();
@@ -67,7 +76,9 @@ class _ChatsPageState extends State<ChatsPage> {
     if (_feed?.conversationId == c.id) return;
     _feed?.removeListener(_onData);
     _feed?.dispose();
-    _feed = ConversationFeed(c.id, isGroup: c.isGroup)..addListener(_onData);
+    _feed = ConversationFeed(c.id, isGroup: c.isGroup)
+      ..otherName = c.isGroup ? null : c.name
+      ..addListener(_onData);
     _repo.chatAppearance(c.id).then((a) {
       if (!mounted) return;
       setState(() {
@@ -124,11 +135,24 @@ class _ChatsPageState extends State<ChatsPage> {
     for (final c in [..._chats, ..._privateChats]) {
       if (c.id == _selectedId) return c;
     }
+    final p = _pendingChats[_selectedId];
+    if (p != null) {
+      return DemoChat(
+        id: _selectedId!,
+        name: p.name,
+        preview: '',
+        time: '',
+        avatarUrl: p.avatarUrl,
+        otherUserId: p.userId,
+        phone: p.phone,
+      );
+    }
     return null;
   }
 
   void _open(DemoChat c) {
     setState(() {
+      if (_selectedId != c.id) _replyTo = null;
       _selectedId = c.id;
       _readIds.add(c.id);
     });
@@ -146,7 +170,9 @@ class _ChatsPageState extends State<ChatsPage> {
     final id = _selectedId;
     if (id == null || text.trim().isEmpty) return;
     if (_live) {
-      _feed?.sendText(text).catchError((_) {
+      final reply = _replyTo;
+      setState(() => _replyTo = null);
+      _feed?.sendText(text, replyTo: reply).catchError((_) {
         _toast('Message not sent. Check your connection and try again.');
       });
       return;
@@ -162,6 +188,257 @@ class _ChatsPageState extends State<ChatsPage> {
         ),
       );
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Message actions
+  // -------------------------------------------------------------------------
+
+  /// Message being replied to in the open chat.
+  DemoMessage? _replyTo;
+
+  String _senderOf(DemoMessage m, DemoChat chat) =>
+      m.isMine ? 'You' : (m.senderName ?? chat.name);
+
+  String? _photoOf(DemoMessage m, DemoChat chat) => m.isMine
+      ? (ChatRepo.instance.me?['avatar_url'] as String?)
+      : (chat.isGroup ? null : chat.avatarUrl);
+
+  Future<void> _guard(Future<void> Function() job, String failure) async {
+    try {
+      await job();
+    } catch (_) {
+      if (mounted) _toast(failure);
+    }
+  }
+
+  void _reply(DemoMessage m) => setState(() => _replyTo = m);
+
+  Future<void> _react(DemoMessage m, String emoji) async {
+    final feed = _feed;
+    if (feed == null) return;
+    await _guard(() => feed.react(m, emoji), 'Could not react. Try again.');
+  }
+
+  Future<void> _quickReact(DemoMessage m, Offset at) async {
+    final e = await showReactionPicker(context, at: at, selected: m.myReaction);
+    if (e != null) await _react(m, e);
+  }
+
+  Future<void> _star(DemoMessage m) async {
+    final feed = _feed;
+    if (feed == null) return;
+    await feed.toggleStar(m);
+  }
+
+  Future<void> _forward(List<DemoMessage> ms) async {
+    final t = await showDialog<ForwardTargets>(
+      context: context,
+      builder: (_) =>
+          ForwardDialog(chats: _repo.chats, loadContacts: _repo.contacts),
+    );
+    if (t == null || !mounted) return;
+    await _guard(() async {
+      await ConversationFeed.forward(
+        ms,
+        conversationIds: t.conversationIds,
+        userIds: t.userIds,
+      );
+      final n = t.conversationIds.length + t.userIds.length;
+      _toast(n == 1 ? 'Message forwarded' : 'Message forwarded to $n chats');
+    }, 'Could not forward. Try again.');
+  }
+
+  Future<void> _onMenu(DemoMessage m, Offset at) async {
+    final feed = _feed;
+    if (feed == null) return;
+    final pick = await showMessageMenu(
+      context,
+      at: at,
+      message: m,
+      canEdit: feed.canEdit(m),
+    );
+    if (pick == null || !mounted) return;
+    if (pick.reaction != null) return _react(m, pick.reaction!);
+    if (pick.morePicker) {
+      final e = await showReactionPicker(context, at: at, full: true);
+      if (e != null) await _react(m, e);
+      return;
+    }
+    switch (pick.action!) {
+      case MsgAction.reply:
+        _reply(m);
+      case MsgAction.copy:
+        await Clipboard.setData(ClipboardData(text: m.text));
+        _toast('Copied');
+      case MsgAction.forward:
+        await _forward([m]);
+      case MsgAction.pin || MsgAction.unpin:
+        await _guard(() async {
+          final err = await feed.setPinned(m, pick.action == MsgAction.pin);
+          if (err != null) _toast(err);
+        }, 'Could not update the pin. Try again.');
+      case MsgAction.star || MsgAction.unstar:
+        await _guard(() => _star(m), 'Could not update. Try again.');
+      case MsgAction.edit:
+        final text = await showEditDialog(context, m.text);
+        if (text == null || text.isEmpty) return;
+        if (!feed.canEdit(m)) {
+          _toast('This message can no longer be edited.');
+          return;
+        }
+        await _guard(() => feed.edit(m, text), 'Could not edit. Try again.');
+      case MsgAction.save:
+        final url = m.kind == MessageKind.image && m.mediaUrls.isNotEmpty
+            ? m.mediaUrls.first
+            : (m.mediaUrl ?? '');
+        await _guard(
+          () => downloadUrl(
+            url,
+            m.kind == MessageKind.document && m.text.isNotEmpty
+                ? m.text
+                : fileNameFromUrl(url),
+          ),
+          'Could not download. Try again.',
+        );
+      case MsgAction.delete:
+        final reason = m.isMine ? feed.deleteBlockReason(m) : null;
+        final choice = await showDeleteDialog(
+          context,
+          own: m.isMine,
+          blockReason: reason,
+        );
+        if (choice == null) return;
+        if (_replyTo?.id == m.id) setState(() => _replyTo = null);
+        if (choice == DeleteChoice.forEveryone) {
+          await _guard(
+            () => feed.deleteForEveryone(m),
+            'This message can no longer be deleted for everyone.',
+          );
+        } else {
+          await _guard(
+            () => feed.deleteForMe(m),
+            'Could not delete. Try again.',
+          );
+        }
+    }
+  }
+
+  Future<void> _clearChat(DemoChat chat) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => DialogShell(
+        title: 'Clear this chat?',
+        width: 420,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'This deletes all messages in this chat for you only. '
+                '${chat.isGroup ? 'Other members' : 'The other person'} will '
+                'still see them.',
+                style: const TextStyle(fontSize: 14.5, color: AppColors.body),
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 46,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.missed,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text('Clear chat'),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(color: AppColors.body),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _guard(() async {
+      await _repo.clearChat(chat.id);
+      _toast('Chat cleared');
+    }, 'Could not clear the chat. Try again.');
+  }
+
+  ViewerActions _viewerActions(DemoChat chat) => ViewerActions(
+    onReply: _reply,
+    onStar: _star,
+    onReact: _quickReact,
+    onForward: (m) => _forward([m]),
+  );
+
+  void _openMedia(
+    DemoChat chat,
+    List<DemoMessage> all,
+    DemoMessage m,
+    String url,
+  ) {
+    final items = <MediaItem>[];
+    var start = 0;
+    for (final x in all) {
+      if (x.kind == MessageKind.image) {
+        final urls = x.mediaUrls.isNotEmpty
+            ? x.mediaUrls
+            : [if ((x.mediaUrl ?? '').isNotEmpty) x.mediaUrl!];
+        for (final u in urls) {
+          if (x.id == m.id && u == url) start = items.length;
+          items.add(
+            MediaItem(
+              message: x,
+              url: u,
+              isVideo: false,
+              sender: _senderOf(x, chat),
+              senderPhoto: _photoOf(x, chat),
+            ),
+          );
+        }
+      } else if (x.kind == MessageKind.video && (x.mediaUrl ?? '').isNotEmpty) {
+        if (x.id == m.id) start = items.length;
+        items.add(
+          MediaItem(
+            message: x,
+            url: x.mediaUrl!,
+            isVideo: true,
+            thumb: x.thumbUrl,
+            sender: _senderOf(x, chat),
+            senderPhoto: _photoOf(x, chat),
+          ),
+        );
+      }
+    }
+    if (items.isEmpty) return;
+    showMediaViewer(
+      context,
+      items: items,
+      start: start,
+      actions: _viewerActions(chat),
+    );
+  }
+
+  void _openDoc(DemoChat chat, DemoMessage m) {
+    if ((m.mediaUrl ?? '').isEmpty) return;
+    showDocumentViewer(
+      context,
+      message: m,
+      sender: _senderOf(m, chat),
+      senderPhoto: _photoOf(m, chat),
+      actions: _viewerActions(chat),
+    );
   }
 
   Future<void> _openPrivate() async {
@@ -191,20 +468,44 @@ class _ChatsPageState extends State<ChatsPage> {
   });
 
   Future<void> _newUser() async {
-    if (_live) {
-      _toast(
-        'Starting new chats on the web is coming next. Use the phone for now.',
-      );
-      return;
-    }
     final picked = await showDialog<List<DemoContact>>(
       context: context,
       builder: (_) => ContactPickerDialog(
-        title: _privateMode ? 'New private chat' : 'Friends',
+        title: _privateMode ? 'New private chat' : 'New chat',
+        load: _live ? _repo.contacts : null,
       ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;
     final contact = picked.first;
+    if (_live) {
+      final uid = contact.userId;
+      if (uid == null) return;
+      await _guard(() async {
+        final id = await _repo.directConversationWith(uid);
+        await _repo.refresh();
+        if (!mounted) return;
+        final all = [..._repo.chats, ..._repo.lockedChats];
+        final c = all.where((x) => x.id == id).firstOrNull;
+        if (c != null && c.isLocked && !_privateMode) {
+          _toast('This chat is in Private Chats.');
+          return;
+        }
+        _open(
+          c ??
+              DemoChat(
+                id: id,
+                name: contact.name,
+                preview: '',
+                time: '',
+                avatarUrl: contact.avatarUrl,
+                otherUserId: uid,
+                phone: contact.phone,
+              ),
+        );
+        if (c == null) _pendingChats[id] = contact;
+      }, 'Could not start the chat. Try again.');
+      return;
+    }
     final target = _privateMode ? _privateChats : _chats;
     final existing = target.where((c) => c.name == contact.name);
     if (existing.isNotEmpty) {
@@ -226,17 +527,37 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   Future<void> _newGroup() async {
-    if (_live) {
-      _toast(
-        'Creating groups on the web is coming next. Use the phone for now.',
-      );
-      return;
-    }
     final g = await showDialog<NewGroup>(
       context: context,
-      builder: (_) => CreateGroupDialog(privateGroup: _privateMode),
+      builder: (_) => CreateGroupDialog(
+        privateGroup: _privateMode,
+        load: _live ? _repo.contacts : null,
+      ),
     );
     if (g == null || !mounted) return;
+    if (_live) {
+      await _guard(() async {
+        String? photo;
+        if (g.photo != null) photo = await _repo.uploadGroupAvatar(g.photo!);
+        final id = await _repo.createGroup(
+          name: g.name,
+          memberIds: [for (final m in g.members) ?m.userId],
+          isPrivate: g.isPrivate,
+          avatarUrl: photo,
+        );
+        if (!mounted) return;
+        final all = [..._repo.chats, ..._repo.lockedChats];
+        final c = all.where((x) => x.id == id).firstOrNull;
+        if (c != null && (!c.isLocked || _privateMode)) {
+          _open(c);
+        } else if (c != null) {
+          _toast('Private group created. Find it in Private Chats.');
+        } else {
+          _toast('Group created.');
+        }
+      }, 'Could not create the group. Try again.');
+      return;
+    }
     final chat = DemoChat(
       id: 'grp-${DateTime.now().microsecondsSinceEpoch}',
       name: g.name,
@@ -255,18 +576,37 @@ class _ChatsPageState extends State<ChatsPage> {
     }
   }
 
-  Future<void> _addMembers(DemoChat chat) async {
+  Future<void> _addMembers(
+    DemoChat chat, {
+    Set<String> exclude = const {},
+  }) async {
     final picked = await showDialog<List<DemoContact>>(
       context: context,
       builder: (_) => ContactPickerDialog(
         title: 'Add Members To Group',
         multiSelect: true,
-        exclude: chat.members.toSet(),
+        exclude: _live ? exclude : chat.members.toSet(),
+        load: _live ? _repo.contacts : null,
       ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;
+    if (_live) {
+      await _guard(() async {
+        await _repo.addMembers(chat.id, [for (final c in picked) ?c.userId]);
+        _infoVersion++;
+        if (mounted) setState(() {});
+        _toast('${picked.length} member(s) added.');
+      }, 'Could not add members. They may already be in the group.');
+      return;
+    }
     _toast('${picked.length} member(s) added.');
   }
+
+  /// Bumped to make the info panel reload after changes.
+  int _infoVersion = 0;
+
+  /// Chats just created that the list has not loaded yet.
+  final Map<String, DemoContact> _pendingChats = {};
 
   Future<void> _pickTheme(DemoChat chat) async {
     final key = await showDialog<String>(
@@ -295,6 +635,12 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   void _call(DemoChat chat, bool video) {
+    if (_live) {
+      CallService.instance.call(chat, video: video).then((err) {
+        if (err != null && mounted) _toast(err);
+      });
+      return;
+    }
     showCallScreen(
       context,
       name: chat.name,
@@ -359,6 +705,19 @@ class _ChatsPageState extends State<ChatsPage> {
                 ? (_feed?.messages ?? const [])
                 : (_messages[chat.id] ?? const []),
             onSend: _send,
+            replyTo: _replyTo,
+            replyName: _replyTo == null ? null : _senderOf(_replyTo!, chat),
+            onCancelReply: () => setState(() => _replyTo = null),
+            onClearChat: _live ? () => _clearChat(chat) : null,
+            actions: _live
+                ? BubbleActions(
+                    onMenu: _onMenu,
+                    onQuickReact: _quickReact,
+                    onOpenMedia: (m, url) =>
+                        _openMedia(chat, _feed?.messages ?? const [], m, url),
+                    onOpenDocument: (m) => _openDoc(chat, m),
+                  )
+                : const BubbleActions(),
             onOpenInfo: () => setState(() => _infoOpen = true),
             onCall: (video) => _call(chat, video),
             onChatTheme: () => _pickTheme(chat),
@@ -372,13 +731,23 @@ class _ChatsPageState extends State<ChatsPage> {
           );
     final info = (chat != null && _infoOpen)
         ? ContactInfoPanel(
-            key: ValueKey('info-${chat.id}'),
+            key: ValueKey('info-${chat.id}-$_infoVersion'),
             chat: chat,
+            live: _live,
+            messages: _live ? (_feed?.messages ?? const []) : const [],
             onClose: () => setState(() => _infoOpen = false),
             onMessage: () => setState(() => _infoOpen = false),
             onCall: (video) => _call(chat, video),
             onChatTheme: () => _pickTheme(chat),
-            onAddMember: () => _addMembers(chat),
+            onAddMember: (existing) => _addMembers(chat, exclude: existing),
+            onOpenMedia: (m, url) =>
+                _openMedia(chat, _feed?.messages ?? const [], m, url),
+            onOpenDocument: (m) => _openDoc(chat, m),
+            onChatRemoved: () => setState(() {
+              _infoOpen = false;
+              _selectedId = null;
+              _replyTo = null;
+            }),
           )
         : null;
 
@@ -926,9 +1295,19 @@ class _ConversationPane extends StatefulWidget {
     this.loading = false,
     this.onBack,
     this.feed,
+    this.replyTo,
+    this.replyName,
+    this.onCancelReply,
+    this.actions = const BubbleActions(),
+    this.onClearChat,
   });
 
+  final VoidCallback? onClearChat;
   final ConversationFeed? feed;
+  final DemoMessage? replyTo;
+  final String? replyName;
+  final VoidCallback? onCancelReply;
+  final BubbleActions actions;
 
   final DemoChat chat;
   final ChatThemeDef? theme;
@@ -950,18 +1329,68 @@ class _ConversationPane extends StatefulWidget {
 
 class _ConversationPaneState extends State<_ConversationPane> {
   final _scroll = ScrollController();
+  final Map<String, GlobalKey> _keys = {};
+  String? _highlight;
+  int _pinIndex = 0;
+  String? _lastId;
+
+  GlobalKey _keyFor(String id) => _keys.putIfAbsent(id, GlobalKey.new);
+
+  @override
+  void initState() {
+    super.initState();
+    _lastId = widget.messages.lastOrNull?.id;
+    _toBottom(jump: true);
+  }
 
   @override
   void didUpdateWidget(covariant _ConversationPane oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Only follow new messages (not reactions, stars or edits).
+    final last = widget.messages.lastOrNull?.id;
+    final firstLoad = oldWidget.loading && !widget.loading;
+    if (last != _lastId || firstLoad) {
+      _lastId = last;
+      _toBottom(jump: firstLoad);
+    }
+  }
+
+  void _toBottom({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
+      if (!_scroll.hasClients) return;
+      final end = _scroll.position.maxScrollExtent;
+      if (jump) {
+        _scroll.jumpTo(end);
+      } else {
         _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
+          end,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
       }
+    });
+  }
+
+  /// Scrolls to a message and tints it briefly (replies, pinned bar).
+  void _jumpTo(String id) {
+    final ctx = _keys[id]?.currentContext;
+    if (ctx == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('That message is no longer available.')),
+        );
+      return;
+    }
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.4,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+    setState(() => _highlight = id);
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (mounted && _highlight == id) setState(() => _highlight = null);
     });
   }
 
@@ -975,6 +1404,16 @@ class _ConversationPaneState extends State<_ConversationPane> {
   Widget build(BuildContext context) {
     final chat = widget.chat;
     final compact = widget.onBack != null;
+    final pinned = widget.messages.where((m) => m.isPinned).toList();
+    if (_pinIndex >= pinned.length) _pinIndex = 0;
+    final a = widget.actions;
+    final actions = BubbleActions(
+      onMenu: a.onMenu,
+      onQuickReact: a.onQuickReact,
+      onOpenMedia: a.onOpenMedia,
+      onOpenDocument: a.onOpenDocument,
+      onReplyTap: _jumpTo,
+    );
     return Column(
       children: [
         _ConversationHeader(
@@ -985,7 +1424,19 @@ class _ConversationPaneState extends State<_ConversationPane> {
           onCall: widget.onCall,
           onChatTheme: widget.onChatTheme,
           onCloseChat: widget.onCloseChat,
+          onClearChat: widget.onClearChat,
         ),
+        if (pinned.isNotEmpty)
+          _PinnedBar(
+            message: pinned[pinned.length - 1 - _pinIndex],
+            index: _pinIndex,
+            count: pinned.length,
+            onTap: () {
+              final m = pinned[pinned.length - 1 - _pinIndex];
+              _jumpTo(m.id);
+              setState(() => _pinIndex = (_pinIndex + 1) % pinned.length);
+            },
+          ),
         Expanded(
           child: _WallpaperBackground(
             theme: widget.theme,
@@ -994,39 +1445,48 @@ class _ConversationPaneState extends State<_ConversationPane> {
                 ? const Center(
                     child: CircularProgressIndicator(color: AppColors.accent),
                   )
-                : ListView(
+                : SingleChildScrollView(
                     controller: _scroll,
                     padding: EdgeInsets.fromLTRB(
-                      compact ? 12 : 28,
+                      compact ? 8 : 22,
                       14,
-                      compact ? 12 : 28,
+                      compact ? 8 : 22,
                       14,
                     ),
-                    children: [
-                      if (widget.messages.isEmpty)
-                        const _EmptyThreadHint()
-                      else
-                        for (var i = 0; i < widget.messages.length; i++) ...[
-                          if (i == 0 ||
-                              !_sameDay(
-                                widget.messages[i - 1].createdAt,
-                                widget.messages[i].createdAt,
-                              ))
-                            Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: Center(
-                                child: _DateChip(
-                                  _dayLabel(widget.messages[i].createdAt),
+                    child: Column(
+                      children: [
+                        if (widget.messages.isEmpty)
+                          const _EmptyThreadHint()
+                        else
+                          for (var i = 0; i < widget.messages.length; i++) ...[
+                            if (i == 0 ||
+                                !_sameDay(
+                                  widget.messages[i - 1].createdAt,
+                                  widget.messages[i].createdAt,
+                                ))
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                child: Center(
+                                  child: _DateChip(
+                                    _dayLabel(widget.messages[i].createdAt),
+                                  ),
                                 ),
                               ),
+                            MessageBubble(
+                              key: widget.messages[i].id.isEmpty
+                                  ? null
+                                  : _keyFor(widget.messages[i].id),
+                              message: widget.messages[i],
+                              compact: compact,
+                              theme: widget.theme,
+                              actions: actions,
+                              highlighted: _highlight == widget.messages[i].id,
                             ),
-                          MessageBubble(
-                            message: widget.messages[i],
-                            compact: compact,
-                            theme: widget.theme,
-                          ),
-                        ],
-                    ],
+                          ],
+                      ],
+                    ),
                   ),
           ),
         ),
@@ -1034,8 +1494,86 @@ class _ConversationPaneState extends State<_ConversationPane> {
           onSend: widget.onSend,
           onTyping: widget.onTyping,
           feed: widget.feed,
+          replyTo: widget.replyTo,
+          replyName: widget.replyName,
+          onCancelReply: widget.onCancelReply,
         ),
       ],
+    );
+  }
+}
+
+/// Pinned messages bar under the header (cycles through pins on tap).
+class _PinnedBar extends StatelessWidget {
+  const _PinnedBar({
+    required this.message,
+    required this.index,
+    required this.count,
+    required this.onTap,
+  });
+
+  final DemoMessage message;
+  final int index;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Row(
+            children: [
+              if (count > 1)
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var i = 0; i < count; i++)
+                      Container(
+                        width: 3,
+                        height: 30 / count - 2,
+                        margin: const EdgeInsets.symmetric(vertical: 1),
+                        decoration: BoxDecoration(
+                          color: i == index
+                              ? AppColors.accent
+                              : AppColors.accentSoft,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                  ],
+                ),
+              const SizedBox(width: 10),
+              const Icon(Icons.push_pin, size: 18, color: AppColors.accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  replyPreview(message).isEmpty
+                      ? 'Pinned message'
+                      : replyPreview(message),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppColors.heading,
+                  ),
+                ),
+              ),
+              if (count > 1)
+                Text(
+                  '${index + 1} of $count',
+                  style: const TextStyle(fontSize: 12.5, color: AppColors.meta),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1049,8 +1587,10 @@ class _ConversationHeader extends StatelessWidget {
     required this.onChatTheme,
     required this.onCloseChat,
     this.onBack,
+    this.onClearChat,
   });
 
+  final VoidCallback? onClearChat;
   final DemoChat chat;
   final String? typingText;
   final VoidCallback onOpenInfo;
@@ -1188,7 +1728,7 @@ class _ConversationHeader extends StatelessWidget {
                 case 1:
                   onChatTheme();
                 case 2:
-                  soon('Clear chat');
+                  onClearChat == null ? soon('Clear chat') : onClearChat!();
                 case 3:
                   onCloseChat();
               }

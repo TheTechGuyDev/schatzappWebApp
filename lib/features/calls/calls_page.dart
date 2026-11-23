@@ -1,7 +1,10 @@
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
+import '../../data/live/call_service.dart';
+import '../../data/live/chat_repo.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
@@ -22,12 +25,121 @@ class CallsPage extends StatefulWidget {
 class _CallsPageState extends State<CallsPage> {
   CallFilter _filter = CallFilter.all;
   String _query = '';
-  String? _selectedId = 'c1';
+  String? _selectedId = WebAuth.instance.isLive ? null : 'c1';
   final _listWidth = PanelWidth('calls_list_width', 480);
+
+  bool get _live => WebAuth.instance.isLive;
+  List<DemoCall> _log = [];
+  bool _loading = true;
+  String? _error;
+  CallPhase _lastPhase = CallPhase.idle;
+
+  List<DemoCall> get _source => _live ? _log : demoCalls;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_live) {
+      _load();
+      CallService.instance.addListener(_onCallChange);
+    }
+  }
+
+  @override
+  void dispose() {
+    CallService.instance.removeListener(_onCallChange);
+    super.dispose();
+  }
+
+  /// Reload the log when a call ends.
+  void _onCallChange() {
+    final p = CallService.instance.phase;
+    if (p == CallPhase.idle && _lastPhase != CallPhase.idle) {
+      Future.delayed(const Duration(seconds: 2), _load);
+    }
+    _lastPhase = p;
+  }
+
+  Future<void> _load() async {
+    try {
+      final log = await loadCallLog();
+      if (!mounted) return;
+      setState(() {
+        _log = log;
+        _loading = false;
+        _error = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Could not load calls. Check your connection.';
+      });
+    }
+  }
+
+  void _toast(String t) => ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(t)));
+
+  /// Calls the person or group of a log entry.
+  Future<void> _callBack(DemoCall c, bool video) async {
+    if (!_live) {
+      showCallScreen(context, name: c.name, color: c.avatarColor, video: video);
+      return;
+    }
+    try {
+      var conv = c.conversationId;
+      if ((conv == null || conv.isEmpty) && c.otherUserId != null) {
+        conv = await ChatRepo.instance.directConversationWith(c.otherUserId!);
+      }
+      if (conv == null) return;
+      final err = await CallService.instance.call(
+        DemoChat(
+          id: conv,
+          name: c.name,
+          preview: '',
+          time: '',
+          isGroup: c.isGroup,
+          avatarUrl: c.avatarUrl,
+          otherUserId: c.otherUserId,
+        ),
+        video: video,
+      );
+      if (err != null) _toast(err);
+    } catch (_) {
+      _toast('Could not start the call, please try again');
+    }
+  }
+
+  Future<void> _newCall() async {
+    final picked = await showDialog<List<DemoContact>>(
+      context: context,
+      builder: (_) => ContactPickerDialog(
+        title: 'New call',
+        load: _live ? ChatRepo.instance.contacts : null,
+      ),
+    );
+    if (picked == null || picked.isEmpty || !mounted) return;
+    final p = picked.first;
+    await _callBack(
+      DemoCall(
+        id: '',
+        name: p.name,
+        direction: CallDirection.outgoing,
+        date: '',
+        time: '',
+        avatarColor: p.color,
+        avatarUrl: p.avatarUrl,
+        otherUserId: p.userId,
+      ),
+      false,
+    );
+  }
 
   List<DemoCall> get _visible {
     final q = _query.trim().toLowerCase();
-    return demoCalls.where((c) {
+    return _source.where((c) {
       final pass = switch (_filter) {
         CallFilter.all => true,
         CallFilter.missed => c.direction == CallDirection.missed,
@@ -44,7 +156,7 @@ class _CallsPageState extends State<CallsPage> {
   }
 
   DemoCall? get _selected {
-    for (final c in demoCalls) {
+    for (final c in _source) {
       if (c.id == _selectedId) return c;
     }
     return null;
@@ -60,6 +172,10 @@ class _CallsPageState extends State<CallsPage> {
       onFilter: (f) => setState(() => _filter = f),
       onSearch: (q) => setState(() => _query = q),
       onOpen: (c) => setState(() => _selectedId = c.id),
+      live: _live,
+      loading: _live && _loading,
+      error: _error,
+      onNewCall: _newCall,
     );
     final call = _selected;
     final details = call == null
@@ -71,6 +187,7 @@ class _CallsPageState extends State<CallsPage> {
           )
         : _CallDetails(
             call: call,
+            onCall: (video) => _callBack(call, video),
             onBack: size == ScreenSize.phone
                 ? () => setState(() => _selectedId = null)
                 : null,
@@ -131,8 +248,16 @@ class _CallList extends StatelessWidget {
     required this.onFilter,
     required this.onSearch,
     required this.onOpen,
+    required this.onNewCall,
+    this.live = false,
+    this.loading = false,
+    this.error,
   });
 
+  final VoidCallback onNewCall;
+  final bool live;
+  final bool loading;
+  final String? error;
   final List<DemoCall> calls;
   final CallFilter filter;
   final String? selectedId;
@@ -162,61 +287,48 @@ class _CallList extends StatelessWidget {
                   ),
                 ),
               ),
-              PopupMenuButton<int>(
-                tooltip: 'More',
-                position: PopupMenuPosition.under,
-                icon: const Icon(
-                  Icons.more_horiz,
-                  size: 28,
-                  color: AppColors.heading,
-                ),
-                onSelected: (v) {
-                  if (v == 0) {
-                    showIncomingCall(
-                      context,
-                      name: 'Mr Kesta Wealth',
-                      color: const Color(0xFF8A6A55),
-                      video: true,
-                    );
-                  } else {
-                    soon('Clear call log');
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(
-                    value: 0,
-                    child: Text('Preview incoming call (demo)'),
+              if (!live)
+                PopupMenuButton<int>(
+                  tooltip: 'More',
+                  position: PopupMenuPosition.under,
+                  icon: const Icon(
+                    Icons.more_horiz,
+                    size: 28,
+                    color: AppColors.heading,
                   ),
-                  PopupMenuItem(value: 1, child: Text('Clear call log')),
-                ],
-              ),
+                  onSelected: (v) {
+                    if (v == 0) {
+                      showIncomingCall(
+                        context,
+                        name: 'Mr Kesta Wealth',
+                        color: const Color(0xFF8A6A55),
+                        video: true,
+                      );
+                    } else {
+                      soon('Clear call log');
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 0,
+                      child: Text('Preview incoming call (demo)'),
+                    ),
+                    PopupMenuItem(value: 1, child: Text('Clear call log')),
+                  ],
+                ),
               IconButton(
                 tooltip: 'New call',
-                onPressed: () async {
-                  final picked = await showDialog<List<DemoContact>>(
-                    context: context,
-                    builder: (_) =>
-                        const ContactPickerDialog(title: 'New call'),
-                  );
-                  if (picked == null || picked.isEmpty || !context.mounted) {
-                    return;
-                  }
-                  showCallScreen(
-                    context,
-                    name: picked.first.name,
-                    color: picked.first.color,
-                    video: false,
-                  );
-                },
+                onPressed: onNewCall,
                 icon: const Icon(Icons.add_call, size: 26),
                 color: AppColors.heading,
               ),
-              IconButton(
-                tooltip: 'Scheduled calls',
-                onPressed: () => soon('Scheduled calls'),
-                icon: const Icon(Icons.calendar_month_outlined, size: 27),
-                color: AppColors.heading,
-              ),
+              if (!live)
+                IconButton(
+                  tooltip: 'Scheduled calls',
+                  onPressed: () => soon('Scheduled calls'),
+                  icon: const Icon(Icons.calendar_month_outlined, size: 27),
+                  color: AppColors.heading,
+                ),
             ],
           ),
         ),
@@ -246,11 +358,15 @@ class _CallList extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: calls.isEmpty
+          child: loading
               ? const Center(
+                  child: CircularProgressIndicator(color: AppColors.accent),
+                )
+              : calls.isEmpty
+              ? Center(
                   child: Text(
-                    'No calls here yet',
-                    style: TextStyle(color: AppColors.meta),
+                    error ?? 'No calls here yet',
+                    style: const TextStyle(color: AppColors.meta),
                   ),
                 )
               : ListView.builder(
@@ -308,7 +424,13 @@ class _CallTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Row(
               children: [
-                Avatar(name: call.name, color: call.avatarColor, size: 58),
+                Avatar(
+                  name: call.name,
+                  color: call.avatarColor,
+                  photoUrl: call.avatarUrl,
+                  isGroup: call.isGroup,
+                  size: 58,
+                ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -370,9 +492,10 @@ class _CallTile extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _CallDetails extends StatelessWidget {
-  const _CallDetails({required this.call, this.onBack});
+  const _CallDetails({required this.call, required this.onCall, this.onBack});
 
   final DemoCall call;
+  final ValueChanged<bool> onCall;
   final VoidCallback? onBack;
 
   @override
@@ -392,23 +515,28 @@ class _CallDetails extends StatelessWidget {
                   icon: const Icon(Icons.arrow_back, color: AppColors.heading),
                 ),
               const Spacer(),
-              IconButton(
-                tooltip: 'Favourite',
-                onPressed: () => soon('Favourites'),
-                icon: const Icon(Icons.star_border_rounded, size: 30),
-                color: AppColors.heading,
-              ),
-              IconButton(
-                tooltip: 'More',
-                onPressed: () => soon('Call options'),
-                icon: const Icon(Icons.more_horiz, size: 28),
-                color: AppColors.heading,
-              ),
+              if (!call.live) ...[
+                IconButton(
+                  tooltip: 'Favourite',
+                  onPressed: () => soon('Favourites'),
+                  icon: const Icon(Icons.star_border_rounded, size: 30),
+                  color: AppColors.heading,
+                ),
+                IconButton(
+                  tooltip: 'More',
+                  onPressed: () => soon('Call options'),
+                  icon: const Icon(Icons.more_horiz, size: 28),
+                  color: AppColors.heading,
+                ),
+              ] else
+                const SizedBox(height: 48),
             ],
           ),
           Avatar(
             name: call.name,
             color: call.avatarColor,
+            photoUrl: call.avatarUrl,
+            isGroup: call.isGroup,
             size: 128,
             isOnline: call.isOnline,
             onlineDotSize: 26,
@@ -425,7 +553,11 @@ class _CallDetails extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            call.isOnline ? 'Online' : 'Last seen recently',
+            call.live
+                ? (call.isGroup
+                      ? 'Group call · ${call.joinedCount} joined'
+                      : (call.isVideo ? 'Video call' : 'Voice call'))
+                : (call.isOnline ? 'Online' : 'Last seen recently'),
             style: const TextStyle(fontSize: 18, color: AppColors.body),
           ),
           const SizedBox(height: 32),
@@ -440,24 +572,14 @@ class _CallDetails extends StatelessWidget {
                     icon: Icons.videocam_outlined,
                     label: 'Video Call',
                     filled: true,
-                    onTap: () => showCallScreen(
-                      context,
-                      name: call.name,
-                      color: call.avatarColor,
-                      video: true,
-                    ),
+                    onTap: () => onCall(true),
                   ),
                   const SizedBox(width: 14),
                   _ActionButton(
                     width: w,
                     icon: Icons.call_outlined,
                     label: 'Voice Call',
-                    onTap: () => showCallScreen(
-                      context,
-                      name: call.name,
-                      color: call.avatarColor,
-                      video: false,
-                    ),
+                    onTap: () => onCall(false),
                   ),
                   const SizedBox(width: 14),
                   _ActionButton(

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/live/call_service.dart';
 import '../data/live/chat_repo.dart';
 import 'device_info.dart';
 
@@ -330,6 +331,9 @@ class WebAuth extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    try {
+      await CallService.instance.stop();
+    } catch (_) {}
     final id = _deviceId;
     if (revoke && id != null) {
       try {

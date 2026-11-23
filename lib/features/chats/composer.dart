@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../data/demo_data.dart';
 import '../../data/live/conversation_feed.dart';
 import '../../platform/camera_dialog.dart';
 import '../../platform/voice_recorder.dart';
@@ -25,7 +26,15 @@ class ChatComposer extends StatefulWidget {
     required this.onSend,
     this.onTyping,
     this.feed,
+    this.replyTo,
+    this.replyName,
+    this.onCancelReply,
   });
+
+  /// Message being replied to (shown above the field).
+  final DemoMessage? replyTo;
+  final String? replyName;
+  final VoidCallback? onCancelReply;
 
   final ValueChanged<String> onSend;
   final VoidCallback? onTyping;
@@ -58,6 +67,14 @@ class _ChatComposerState extends State<ChatComposer> {
   }
 
   @override
+  void didUpdateWidget(covariant ChatComposer old) {
+    super.didUpdateWidget(old);
+    if (widget.replyTo != null && widget.replyTo?.id != old.replyTo?.id) {
+      _focus.requestFocus();
+    }
+  }
+
+  @override
   void dispose() {
     _ticker?.cancel();
     if (_recording) _recorder.stop(cancel: true);
@@ -67,6 +84,12 @@ class _ChatComposerState extends State<ChatComposer> {
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
+    if (e is KeyDownEvent &&
+        e.logicalKey == LogicalKeyboardKey.escape &&
+        widget.replyTo != null) {
+      widget.onCancelReply?.call();
+      return KeyEventResult.handled;
+    }
     if (e is KeyDownEvent &&
         (e.logicalKey == LogicalKeyboardKey.enter ||
             e.logicalKey == LogicalKeyboardKey.numpadEnter) &&
@@ -234,6 +257,7 @@ class _ChatComposerState extends State<ChatComposer> {
                 children: [for (final u in uploads) _UploadChip(label: u)],
               ),
             ),
+          if (widget.replyTo != null && !_recording) _replyBar(widget.replyTo!),
           _recording ? _recordingBar() : _inputBar(),
         ],
       ),
@@ -321,6 +345,76 @@ class _ChatComposerState extends State<ChatComposer> {
     );
   }
 
+  Widget _replyBar(DemoMessage m) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8, right: 64),
+      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AppColors.accent,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Replying to ${widget.replyName ?? (m.isMine ? 'yourself' : 'message')}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.accentDark,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  replyPreview(m),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, color: AppColors.body),
+                ),
+              ],
+            ),
+          ),
+          if (m.isMedia && (m.thumbUrl ?? m.mediaUrl) != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  (m.kind == MessageKind.video ? m.thumbUrl : null) ??
+                      (m.mediaUrls.isNotEmpty
+                          ? m.mediaUrls.first
+                          : m.mediaUrl!),
+                  width: 42,
+                  height: 42,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox(width: 42),
+                ),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Cancel reply',
+            onPressed: widget.onCancelReply,
+            icon: const Icon(Icons.close_rounded, size: 20),
+            color: AppColors.body,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _attachButton() {
     return MenuAnchor(
       controller: _attachMenu,
@@ -367,7 +461,7 @@ class _ChatComposerState extends State<ChatComposer> {
       alignmentOffset: const Offset(0, -8),
       style: _menuStyle,
       menuChildren: [
-        _EmojiGrid(
+        EmojiGrid(
           onPick: (e) {
             _insertEmoji(e);
           },
@@ -661,7 +755,7 @@ class _PulseDotState extends State<_PulseDot>
 // Emoji picker
 // ----------------------------------------------------------------------
 
-const _emojiSets = <(String, IconData, String)>[
+const emojiSets = <(String, IconData, String)>[
   (
     'Smileys',
     Icons.sentiment_satisfied_alt_outlined,
@@ -684,21 +778,21 @@ const _emojiSets = <(String, IconData, String)>[
   ),
 ];
 
-class _EmojiGrid extends StatefulWidget {
-  const _EmojiGrid({required this.onPick});
+class EmojiGrid extends StatefulWidget {
+  const EmojiGrid({super.key, required this.onPick});
 
   final ValueChanged<String> onPick;
 
   @override
-  State<_EmojiGrid> createState() => _EmojiGridState();
+  State<EmojiGrid> createState() => _EmojiGridState();
 }
 
-class _EmojiGridState extends State<_EmojiGrid> {
+class _EmojiGridState extends State<EmojiGrid> {
   int _tab = 0;
 
   @override
   Widget build(BuildContext context) {
-    final emojis = _emojiSets[_tab].$3.split(' ');
+    final emojis = emojiSets[_tab].$3.split(' ');
     return SizedBox(
       width: 340,
       height: 300,
@@ -708,10 +802,10 @@ class _EmojiGridState extends State<_EmojiGrid> {
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Row(
               children: [
-                for (var i = 0; i < _emojiSets.length; i++)
+                for (var i = 0; i < emojiSets.length; i++)
                   Expanded(
                     child: Tooltip(
-                      message: _emojiSets[i].$1,
+                      message: emojiSets[i].$1,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(10),
                         onTap: () => setState(() => _tab = i),
@@ -728,7 +822,7 @@ class _EmojiGridState extends State<_EmojiGrid> {
                             ),
                           ),
                           child: Icon(
-                            _emojiSets[i].$2,
+                            emojiSets[i].$2,
                             size: 21,
                             color: i == _tab
                                 ? AppColors.accent

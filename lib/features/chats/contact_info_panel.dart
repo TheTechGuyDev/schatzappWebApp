@@ -1,12 +1,16 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:web/web.dart' as web;
 
 import '../../data/demo_data.dart';
+import '../../data/live/chat_info.dart';
+import '../../data/live/chat_repo.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
+import 'chat_dialogs.dart';
+import 'message_bubble.dart' show formatBytes;
 
-/// Right-hand profile panel, opened by tapping the avatar or name in the
-/// conversation header. Layout follows the supplied Contact Info design.
-/// Placeholder data for now.
+/// Right-hand Contact / Group info panel, opened from the conversation
+/// header. Live mode reads the same tables as the phone.
 class ContactInfoPanel extends StatefulWidget {
   const ContactInfoPanel({
     super.key,
@@ -16,57 +20,342 @@ class ContactInfoPanel extends StatefulWidget {
     required this.onCall,
     required this.onChatTheme,
     required this.onAddMember,
+    this.live = false,
+    this.messages = const [],
+    this.onOpenMedia,
+    this.onOpenDocument,
+    this.onChatRemoved,
   });
 
   final DemoChat chat;
   final VoidCallback onClose;
   final ValueChanged<bool> onCall;
   final VoidCallback onChatTheme;
-  final VoidCallback onAddMember;
+
+  /// Opens the add-members picker (ids already in the group are excluded).
+  final void Function(Set<String> existing) onAddMember;
 
   /// Closes the panel and returns to the conversation.
   final VoidCallback onMessage;
+
+  final bool live;
+
+  /// Messages of this chat (for media, links, files and starred).
+  final List<DemoMessage> messages;
+  final void Function(DemoMessage m, String url)? onOpenMedia;
+  final void Function(DemoMessage m)? onOpenDocument;
+
+  /// The chat was deleted or the group was left.
+  final VoidCallback? onChatRemoved;
 
   @override
   State<ContactInfoPanel> createState() => _ContactInfoPanelState();
 }
 
-enum _MoreAction { mute, lock, saveMedia, block, exitGroup, report, delete }
+enum _More { mute, block, exitGroup, clear, delete }
+
+final _urlRe = RegExp(r'(https?://[^\s]+|www\.[^\s]+)', caseSensitive: false);
 
 class _ContactInfoPanelState extends State<ContactInfoPanel> {
-  bool _muted = false;
-  bool _locked = false;
-  bool _saveMedia = true;
+  ChatInfo? _info;
+  bool _loading = false;
+  bool _demoMuted = false;
 
-  void _soon(String what) => ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text('$what is coming soon.')));
+  @override
+  void initState() {
+    super.initState();
+    if (widget.live) _load();
+  }
 
-  void _onMore(_MoreAction a) {
-    switch (a) {
-      case _MoreAction.mute:
-        setState(() => _muted = !_muted);
-      case _MoreAction.lock:
-        setState(() => _locked = !_locked);
-      case _MoreAction.saveMedia:
-        setState(() => _saveMedia = !_saveMedia);
-      case _MoreAction.block:
-        _soon('Block');
-      case _MoreAction.exitGroup:
-        _soon('Exit group');
-      case _MoreAction.report:
-        _soon('Report');
-      case _MoreAction.delete:
-        _soon('Delete chat');
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final i = await ChatInfo.load(widget.chat);
+      if (mounted) setState(() => _info = i);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _toast(String t) => ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(t)));
+
+  ChatRepo get _repo => ChatRepo.instance;
+
+  Future<bool> _confirm(String title, String body, String action) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => DialogShell(
+        title: title,
+        width: 420,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                body,
+                style: const TextStyle(fontSize: 14.5, color: AppColors.body),
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 46,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.missed,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    action,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(color: AppColors.body),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _onMore(_More a) async {
+    final c = widget.chat;
+    if (!widget.live) {
+      if (a == _More.mute) {
+        setState(() => _demoMuted = !_demoMuted);
+      } else {
+        _toast('Sign in with your phone to use this.');
+      }
+      return;
+    }
+    final i = _info;
+    try {
+      switch (a) {
+        case _More.mute:
+          final to = !(i?.muted ?? c.isMuted);
+          await _repo.setMuted(c.id, to);
+          setState(() => i?.muted = to);
+          _toast(to ? 'Notifications muted' : 'Notifications unmuted');
+        case _More.block:
+          final other = c.otherUserId;
+          if (other == null || i == null) return;
+          if (i.blockStatus == 'i_blocked') {
+            await _repo.unblock(other);
+            setState(() => i.blockStatus = 'none');
+            _toast('${i.name} unblocked');
+          } else {
+            final ok = await _confirm(
+              'Block ${i.name}?',
+              'Blocked contacts can no longer call you or send you messages.',
+              'Block',
+            );
+            if (!ok) return;
+            await _repo.block(other);
+            setState(() => i.blockStatus = 'i_blocked');
+            _toast('${i.name} blocked');
+          }
+        case _More.exitGroup:
+          final ok = await _confirm(
+            'Exit "${i?.name ?? c.name}"?',
+            'You will stop receiving messages from this group.',
+            'Exit group',
+          );
+          if (!ok) return;
+          await _repo.leaveGroup(c.id);
+          _toast('You left the group');
+          widget.onChatRemoved?.call();
+        case _More.clear:
+          final ok = await _confirm(
+            'Clear this chat?',
+            'This deletes all messages in this chat for you only. '
+                '${c.isGroup ? 'Other members' : 'The other person'} will '
+                'still see them.',
+            'Clear chat',
+          );
+          if (!ok) return;
+          await _repo.clearChat(c.id);
+          _toast('Chat cleared');
+        case _More.delete:
+          final ok = await _confirm(
+            'Delete this chat?',
+            'The chat and its messages are removed from your list on all '
+                'your devices.',
+            'Delete chat',
+          );
+          if (!ok) return;
+          await _repo.deleteChat(c.id);
+          _toast('Chat deleted');
+          widget.onChatRemoved?.call();
+      }
+    } catch (_) {
+      _toast('Something went wrong. Try again.');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+
+  List<(DemoMessage, String)> get _media => [
+    for (final m in widget.messages)
+      if (m.kind == MessageKind.image)
+        for (final u
+            in (m.mediaUrls.isNotEmpty
+                ? m.mediaUrls
+                : [if ((m.mediaUrl ?? '').isNotEmpty) m.mediaUrl!]))
+          (m, u)
+      else if (m.kind == MessageKind.video && (m.mediaUrl ?? '').isNotEmpty)
+        (m, m.mediaUrl!),
+  ].reversed.toList();
+
+  List<DemoMessage> get _docs => widget.messages
+      .where((m) => m.kind == MessageKind.document)
+      .toList()
+      .reversed
+      .toList();
+
+  List<(DemoMessage, String)> get _links => [
+    for (final m in widget.messages)
+      if (m.kind == MessageKind.text)
+        for (final x in _urlRe.allMatches(m.text)) (m, x.group(0)!),
+  ].reversed.toList();
+
+  void _openMediaLinks() {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _MediaLinksDialog(
+        media: _media,
+        docs: _docs,
+        links: _links,
+        onOpenMedia: (m, u) {
+          Navigator.of(context).pop();
+          widget.onOpenMedia?.call(m, u);
+        },
+        onOpenDocument: (m) {
+          Navigator.of(context).pop();
+          widget.onOpenDocument?.call(m);
+        },
+      ),
+    );
+  }
+
+  void _openStarred() {
+    final starred = widget.messages.where((m) => m.isStarred).toList();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => DialogShell(
+        title: 'Starred messages',
+        width: 460,
+        child: starred.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.fromLTRB(24, 10, 24, 34),
+                child: Text(
+                  'Star messages from the message menu to find them here.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.meta),
+                ),
+              )
+            : ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                itemCount: starred.length,
+                separatorBuilder: (_, _) =>
+                    const Divider(height: 1, color: AppColors.border),
+                itemBuilder: (_, i) {
+                  final m = starred[starred.length - 1 - i];
+                  final sender = m.isMine
+                      ? 'You'
+                      : (m.senderName ?? widget.chat.name);
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    leading: const Icon(
+                      Icons.star_rounded,
+                      color: AppColors.accent,
+                    ),
+                    title: Text(
+                      _messageSummary(m),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: AppColors.heading),
+                    ),
+                    subtitle: Text(
+                      '$sender · ${m.time}',
+                      style: const TextStyle(
+                        color: AppColors.meta,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    onTap: () {
+                      if (m.isMedia) {
+                        Navigator.of(ctx).pop();
+                        widget.onOpenMedia?.call(
+                          m,
+                          m.mediaUrls.isNotEmpty
+                              ? m.mediaUrls.first
+                              : (m.mediaUrl ?? ''),
+                        );
+                      } else if (m.kind == MessageKind.document) {
+                        Navigator.of(ctx).pop();
+                        widget.onOpenDocument?.call(m);
+                      }
+                    },
+                  );
+                },
+              ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final c = widget.chat;
     final group = c.isGroup;
-    final mediaSummary =
-        '${c.mediaCount} Media, ${c.links.length} Links, 0 Files';
+    final i = _info;
+    final live = widget.live;
+
+    final name = i?.name ?? c.name;
+    final photo = i?.avatarUrl ?? c.avatarUrl;
+    final phone = i?.phone ?? c.phone;
+    final username = i?.username ?? c.username;
+    final about = live
+        ? (group ? (i?.description ?? '') : (i?.about ?? ''))
+        : c.about;
+    final online = i?.isOnline ?? c.isOnline;
+    final muted = live ? (i?.muted ?? c.isMuted) : _demoMuted;
+    final members = i?.members ?? const <InfoMember>[];
+    final memberCount = live ? members.length : c.members.length + 1;
+    final blocked = i?.blockStatus == 'i_blocked';
+    final privateGroup = i?.isPrivateGroup ?? false;
+
+    final media = live ? _media : const <(DemoMessage, String)>[];
+    final docs = live ? _docs : const <DemoMessage>[];
+    final links = live ? _links : const <(DemoMessage, String)>[];
+    final starredCount = widget.messages.where((m) => m.isStarred).length;
+    final mediaSummary = live
+        ? '${media.length} Media, ${links.length} Links, ${docs.length} Files'
+        : '${c.mediaCount} Media, ${c.links.length} Links, 0 Files';
+
+    String subtitle;
+    if (group) {
+      subtitle = 'Group · $memberCount members';
+    } else {
+      subtitle = phone;
+    }
 
     return Container(
       color: Colors.white,
@@ -75,79 +364,68 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
           ListView(
             padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
             children: [
-              // Identity
               Center(
                 child: Avatar(
-                  name: c.name,
+                  name: name,
                   color: c.avatarColor,
-                  photoUrl: c.avatarUrl,
+                  photoUrl: photo,
                   isGroup: group,
                   size: 104,
                 ),
               ),
               const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      c.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.heading,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: () =>
-                        _soon(group ? 'Edit group' : 'Edit contact name'),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.edit_outlined,
-                        size: 20,
-                        color: AppColors.heading,
-                      ),
-                    ),
-                  ),
-                ],
+              Text(
+                name,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.heading,
+                ),
               ),
-              if (!group && c.username.isNotEmpty) _CenterLine(c.username),
-              _CenterLine(
-                group ? 'Group · ${c.members.length + 1} members' : c.phone,
-              ),
-              if (!group && c.isOnline) ...[
+              if (!group && username.isNotEmpty)
+                _CenterLine(username.startsWith('@') ? username : '@$username'),
+              if (subtitle.isNotEmpty) _CenterLine(subtitle),
+              if (privateGroup) const _CenterLine('Private group'),
+              if (!group) ...[
                 const SizedBox(height: 6),
                 Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD9F7DD),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      'Online',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF14A23A),
-                      ),
-                    ),
-                  ),
+                  child: online
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD9F7DD),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            'Online',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF14A23A),
+                            ),
+                          ),
+                        )
+                      : (i?.lastSeen != null
+                            ? Text(
+                                'Last seen ${_lastSeen(i!.lastSeen!)}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.meta,
+                                ),
+                              )
+                            : const SizedBox.shrink()),
                 ),
               ],
-              if (c.about.isNotEmpty) ...[
+              if (about.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Text(
-                  c.about,
+                  about,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 14,
@@ -156,6 +434,29 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                   ),
                 ),
               ],
+              if (group && i?.createdAt != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Created${i!.createdByName == null || i.createdByName!.isEmpty ? '' : ' by ${i.createdByName}'}'
+                  ' on ${i.createdAt!.day}/${i.createdAt!.month}/${i.createdAt!.year}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12.5, color: AppColors.meta),
+                ),
+              ],
+              if (_loading && i == null)
+                const Padding(
+                  padding: EdgeInsets.only(top: 10),
+                  child: Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.accent,
+                      ),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 16),
 
               // Actions
@@ -166,39 +467,39 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                     label: 'Message',
                     onTap: widget.onMessage,
                   ),
-                  _ActionCard(
-                    icon: Icons.call,
-                    label: 'Voice Call',
-                    onTap: () => widget.onCall(false),
-                  ),
-                  _ActionCard(
-                    icon: Icons.videocam,
-                    label: 'Video Call',
-                    onTap: () => widget.onCall(true),
-                  ),
+                  if (!privateGroup && !blocked) ...[
+                    _ActionCard(
+                      icon: Icons.call,
+                      label: 'Voice Call',
+                      onTap: () => widget.onCall(false),
+                    ),
+                    _ActionCard(
+                      icon: Icons.videocam,
+                      label: 'Video Call',
+                      onTap: () => widget.onCall(true),
+                    ),
+                  ],
                   Expanded(
-                    child: PopupMenuButton<_MoreAction>(
+                    child: PopupMenuButton<_More>(
                       tooltip: 'More',
                       position: PopupMenuPosition.under,
+                      color: Colors.white,
+                      surfaceTintColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                       onSelected: _onMore,
                       itemBuilder: (_) => [
-                        _check(_MoreAction.mute, 'Mute notifications', _muted),
-                        _check(_MoreAction.lock, 'Lock chat', _locked),
-                        _check(
-                          _MoreAction.saveMedia,
-                          'Save to gallery',
-                          _saveMedia,
-                        ),
+                        _check(_More.mute, 'Mute notifications', muted),
                         const PopupMenuDivider(),
+                        _plain(_More.clear, 'Clear chat'),
                         if (group)
-                          _danger(_MoreAction.exitGroup, 'Exit group')
+                          _danger(_More.exitGroup, 'Exit group')
                         else
-                          _danger(_MoreAction.block, 'Block ${c.name}'),
-                        _danger(
-                          _MoreAction.report,
-                          group ? 'Report group' : 'Report ${c.name}',
-                        ),
-                        _danger(_MoreAction.delete, 'Delete chat'),
+                          blocked
+                              ? _plain(_More.block, 'Unblock $name')
+                              : _danger(_More.block, 'Block $name'),
+                        _danger(_More.delete, 'Delete chat'),
                       ],
                       child: const _ActionCardBody(
                         icon: Icons.more_horiz,
@@ -208,86 +509,128 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                   ),
                 ],
               ),
+              if (blocked)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    'You blocked $name. Unblock to call or message.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.missed,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 14),
 
-              // Media and links
+              // Media, links and files
               _Row(
                 icon: Icons.perm_media_outlined,
                 title: 'Media, Links and Files',
                 subtitle: mediaSummary,
-                onTap: () => _soon('Media, links and files'),
+                onTap: live
+                    ? _openMediaLinks
+                    : () => _toast(
+                        'Sign in with your phone to see shared media.',
+                      ),
               ),
-              if (c.links.isNotEmpty) ...[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(4, 8, 4, 4),
-                  child: Text(
-                    'Links',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.heading,
-                    ),
+              if (media.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 10, 4, 10),
+                  child: Row(
+                    children: [
+                      for (final (m, u) in media.take(4))
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 3),
+                            child: _Thumb(
+                              message: m,
+                              url: u,
+                              onTap: () => widget.onOpenMedia?.call(m, u),
+                            ),
+                          ),
+                        ),
+                      for (var k = media.length; k < 4; k++)
+                        const Expanded(child: SizedBox()),
+                    ],
                   ),
                 ),
+              if (!live && c.links.isNotEmpty) ...[
+                const _SectionTitle('Links'),
                 for (final l in c.links) _LinkRow(title: l.$1, url: l.$2),
                 const Divider(height: 14, color: AppColors.border),
               ],
 
               // Members (groups) or groups in common (people)
               if (group) ...[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(4, 4, 4, 6),
-                  child: Text(
-                    'Members',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.heading,
+                _SectionTitle('Members ($memberCount)'),
+                if (!live || (i?.iAmAdmin ?? false))
+                  _MemberRow(
+                    name: 'Add member',
+                    isAction: true,
+                    onTap: () =>
+                        widget.onAddMember({for (final m in members) m.userId}),
+                  ),
+                if (live)
+                  for (final m in members)
+                    _MemberRow(
+                      name: m.name,
+                      photoUrl: m.avatarUrl,
+                      isAdmin: m.isAdmin,
+                    )
+                else ...[
+                  const _MemberRow(name: 'You', isAdmin: true),
+                  for (final m in c.members) _MemberRow(name: m),
+                ],
+                const Divider(height: 14, color: AppColors.border),
+              ] else if (live) ...[
+                _SectionTitle(
+                  'Groups in Common (${i?.groupsInCommon.length ?? 0})',
+                ),
+                if ((i?.groupsInCommon ?? const []).isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(6, 2, 6, 8),
+                    child: Text(
+                      'No groups in common',
+                      style: TextStyle(fontSize: 13, color: AppColors.meta),
                     ),
                   ),
-                ),
-                _MemberRow(
-                  name: 'Add member',
-                  isAction: true,
-                  onTap: widget.onAddMember,
-                ),
-                const _MemberRow(name: 'You', isAdmin: true),
-                for (final m in c.members) _MemberRow(name: m),
+                for (final g in i?.groupsInCommon ?? const <InfoGroup>[])
+                  _MemberRow(
+                    name: g.name,
+                    photoUrl: g.avatarUrl,
+                    isGroup: true,
+                    trailing: '${g.memberCount} members',
+                  ),
                 const Divider(height: 14, color: AppColors.border),
               ] else
                 _Row(
                   icon: Icons.groups_outlined,
                   title: 'Groups in Common',
                   subtitle: '${c.groupsInCommon} Groups',
-                  onTap: () => _soon('Groups in common'),
+                  onTap: () {},
                 ),
               _Row(
-                icon: Icons.bookmark_border_rounded,
-                title: 'Important',
-                subtitle: 'View important chats',
-                onTap: () => _soon('Important messages'),
-              ),
-              _Row(
-                icon: Icons.cleaning_services_outlined,
-                title: 'Clear Chat',
-                subtitle: 'Delete all messages in this chat',
-                onTap: () => _soon('Clear chat'),
+                icon: Icons.star_border_rounded,
+                title: 'Starred messages',
+                subtitle: starredCount == 0
+                    ? 'None yet'
+                    : '$starredCount starred',
+                onTap: _openStarred,
               ),
               _Row(
                 icon: Icons.palette_outlined,
                 title: 'Chat Theme',
                 subtitle: 'Pick your preference',
                 onTap: widget.onChatTheme,
-                last: group,
               ),
-              if (!group)
-                _Row(
-                  icon: Icons.people_alt_outlined,
-                  title: 'Mutual Contacts',
-                  subtitle: '${c.mutualContacts} Friends',
-                  onTap: () => _soon('Mutual contacts'),
-                  last: true,
-                ),
+              _Row(
+                icon: Icons.cleaning_services_outlined,
+                title: 'Clear Chat',
+                subtitle: 'Delete all messages in this chat for you',
+                onTap: () => _onMore(_More.clear),
+                last: true,
+              ),
             ],
           ),
           Positioned(
@@ -304,7 +647,7 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
     );
   }
 
-  PopupMenuItem<_MoreAction> _check(_MoreAction a, String label, bool on) {
+  PopupMenuItem<_More> _check(_More a, String label, bool on) {
     return PopupMenuItem(
       value: a,
       child: Row(
@@ -321,10 +664,267 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
     );
   }
 
-  PopupMenuItem<_MoreAction> _danger(_MoreAction a, String label) {
+  PopupMenuItem<_More> _plain(_More a, String label) =>
+      PopupMenuItem(value: a, child: Text(label));
+
+  PopupMenuItem<_More> _danger(_More a, String label) {
     return PopupMenuItem(
       value: a,
       child: Text(label, style: const TextStyle(color: AppColors.missed)),
+    );
+  }
+}
+
+String _messageSummary(DemoMessage m) {
+  final t = m.text.trim();
+  return switch (m.kind) {
+    MessageKind.image => t.isEmpty ? 'Photo' : 'Photo: $t',
+    MessageKind.video => t.isEmpty ? 'Video' : 'Video: $t',
+    MessageKind.voice => 'Voice message',
+    MessageKind.document => t.isEmpty ? 'Document' : t,
+    _ => t,
+  };
+}
+
+String _lastSeen(DateTime d) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final diff = today.difference(DateTime(d.year, d.month, d.day)).inDays;
+  final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+  final t =
+      '$h:${d.minute.toString().padLeft(2, '0')} ${d.hour < 12 ? 'AM' : 'PM'}';
+  if (diff == 0) return 'today at $t';
+  if (diff == 1) return 'yesterday at $t';
+  return '${d.day}/${d.month}/${d.year}';
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 6),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: AppColors.heading,
+        ),
+      ),
+    );
+  }
+}
+
+class _Thumb extends StatelessWidget {
+  const _Thumb({required this.message, required this.url, required this.onTap});
+
+  final DemoMessage message;
+  final String url;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final video = message.kind == MessageKind.video;
+    final src = video ? message.thumbUrl : url;
+    return AspectRatio(
+      aspectRatio: 1,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (src != null && src.isNotEmpty)
+                Image.network(
+                  src,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      Container(color: AppColors.accentSoft),
+                )
+              else
+                Container(color: const Color(0xFF2A1450)),
+              if (video)
+                const Center(
+                  child: Icon(
+                    Icons.play_circle_fill_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaLinksDialog extends StatefulWidget {
+  const _MediaLinksDialog({
+    required this.media,
+    required this.docs,
+    required this.links,
+    required this.onOpenMedia,
+    required this.onOpenDocument,
+  });
+
+  final List<(DemoMessage, String)> media;
+  final List<DemoMessage> docs;
+  final List<(DemoMessage, String)> links;
+  final void Function(DemoMessage m, String url) onOpenMedia;
+  final void Function(DemoMessage m) onOpenDocument;
+
+  @override
+  State<_MediaLinksDialog> createState() => _MediaLinksDialogState();
+}
+
+class _MediaLinksDialogState extends State<_MediaLinksDialog> {
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs = [
+      'Media (${widget.media.length})',
+      'Files (${widget.docs.length})',
+      'Links (${widget.links.length})',
+    ];
+    Widget empty(String t) => Padding(
+      padding: const EdgeInsets.all(36),
+      child: Center(
+        child: Text(t, style: const TextStyle(color: AppColors.meta)),
+      ),
+    );
+    final Widget body = switch (_tab) {
+      0 =>
+        widget.media.isEmpty
+            ? empty('No photos or videos yet')
+            : GridView.count(
+                crossAxisCount: 4,
+                shrinkWrap: true,
+                mainAxisSpacing: 6,
+                crossAxisSpacing: 6,
+                padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
+                children: [
+                  for (final (m, u) in widget.media)
+                    _Thumb(
+                      message: m,
+                      url: u,
+                      onTap: () => widget.onOpenMedia(m, u),
+                    ),
+                ],
+              ),
+      1 =>
+        widget.docs.isEmpty
+            ? empty('No files yet')
+            : ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                children: [
+                  for (final d in widget.docs)
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.accentSoft,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.description_outlined,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                      title: Text(
+                        d.text.isEmpty ? 'Document' : d.text,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.heading,
+                        ),
+                      ),
+                      subtitle: Text(
+                        [
+                          if (d.raw['media_size_bytes'] is int)
+                            formatBytes(d.raw['media_size_bytes'] as int),
+                          d.time,
+                        ].join(' · '),
+                        style: const TextStyle(color: AppColors.meta),
+                      ),
+                      onTap: () => widget.onOpenDocument(d),
+                    ),
+                ],
+              ),
+      _ =>
+        widget.links.isEmpty
+            ? empty('No links yet')
+            : ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                children: [
+                  for (final (_, url) in widget.links)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => web.window.open(
+                        url.startsWith('http') ? url : 'https://$url',
+                        '_blank',
+                        'noopener',
+                      ),
+                      child: _LinkRow(
+                        title:
+                            Uri.tryParse(
+                              url.startsWith('http') ? url : 'https://$url',
+                            )?.host ??
+                            url,
+                        url: url,
+                      ),
+                    ),
+                ],
+              ),
+    };
+    return DialogShell(
+      title: 'Media, Links and Files',
+      width: 560,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+            child: Row(
+              children: [
+                for (var k = 0; k < tabs.length; k++)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(tabs[k]),
+                      selected: _tab == k,
+                      showCheckmark: false,
+                      selectedColor: AppColors.accent,
+                      backgroundColor: AppColors.lavenderSoft,
+                      side: BorderSide.none,
+                      shape: const StadiumBorder(),
+                      labelStyle: TextStyle(
+                        color: _tab == k ? Colors.white : AppColors.body,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      onSelected: (_) => setState(() => _tab = k),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Flexible(child: body),
+        ],
+      ),
     );
   }
 }
@@ -484,7 +1084,7 @@ class _LinkRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 3, 4, 3),
+      padding: const EdgeInsets.fromLTRB(10, 5, 4, 5),
       child: Row(
         children: [
           Container(
@@ -503,6 +1103,8 @@ class _LinkRow extends StatelessWidget {
               children: [
                 Text(
                   title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -532,12 +1134,18 @@ class _MemberRow extends StatelessWidget {
     required this.name,
     this.isAdmin = false,
     this.isAction = false,
+    this.isGroup = false,
+    this.photoUrl,
+    this.trailing,
     this.onTap,
   });
 
   final String name;
   final bool isAdmin;
   final bool isAction;
+  final bool isGroup;
+  final String? photoUrl;
+  final String? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -567,12 +1175,15 @@ class _MemberRow extends StatelessWidget {
               Avatar(
                 name: name,
                 size: 38,
-                color: name == 'You' ? null : const Color(0xFF8A6A55),
+                photoUrl: photoUrl,
+                isGroup: isGroup,
               ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 14.5,
                   fontWeight: FontWeight.w600,
@@ -580,6 +1191,11 @@ class _MemberRow extends StatelessWidget {
                 ),
               ),
             ),
+            if (trailing != null)
+              Text(
+                trailing!,
+                style: const TextStyle(fontSize: 12, color: AppColors.meta),
+              ),
             if (isAdmin)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

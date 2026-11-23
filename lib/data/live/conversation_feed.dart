@@ -31,6 +31,9 @@ class ConversationFeed extends ChangeNotifier {
   List<Map<String, dynamic>> _raw = [];
   final Map<String, String> _names = {};
   final Map<String, List<String>> _reactions = {};
+  final Map<String, String> _myReactions = {};
+  Set<String> _stars = {};
+  StreamSubscription? _starSub;
   DateTime? _othersReadAt;
   bool _receiptsOn = true;
   final List<Map<String, dynamic>> _pending = [];
@@ -58,6 +61,15 @@ class ConversationFeed extends ChangeNotifier {
         }, onError: (_) {});
 
     _loadReadState();
+
+    _starSub = _sb
+        .from('message_stars')
+        .stream(primaryKey: ['user_id', 'message_id'])
+        .eq('user_id', _me)
+        .listen((rows) {
+          _stars = rows.map((r) => '${r['message_id']}').toSet();
+          _emit();
+        }, onError: (_) {});
 
     _metaChannel = _sb
         .channel('web-conv-meta-$conversationId')
@@ -149,14 +161,18 @@ class ConversationFeed extends ChangeNotifier {
     try {
       final rows = await _sb
           .from('message_reactions')
-          .select('message_id, emoji')
+          .select('message_id, emoji, user_id')
           .inFilter(
             'message_id',
             ids.length > 300 ? ids.sublist(ids.length - 300) : ids,
           );
       _reactions.clear();
+      _myReactions.clear();
       for (final r in rows) {
         (_reactions[r['message_id'] as String] ??= []).add('${r['emoji']}');
+        if (r['user_id'] == _me) {
+          _myReactions[r['message_id'] as String] = '${r['emoji']}';
+        }
       }
     } catch (_) {}
   }
@@ -248,6 +264,13 @@ class ConversationFeed extends ChangeNotifier {
           replyTo: r['reply_to_content'] as String?,
           isEdited: r['is_edited'] == true,
           isForwarded: r['is_forwarded'] == true,
+          senderId: r['sender_id'] as String?,
+          isStarred: _stars.contains('${r['id']}'),
+          isPinned: r['is_pinned'] == true,
+          myReaction: _myReactions['${r['id']}'],
+          replyToId: r['reply_to_message_id'] as String?,
+          replyLabel: r['reply_to_content'] == null ? null : _replyLabel(r),
+          raw: r,
         ),
       );
     }
@@ -257,8 +280,26 @@ class ConversationFeed extends ChangeNotifier {
     _notify();
   }
 
+  String _replyLabel(Map<String, dynamic> r) {
+    final own = r['reply_to_is_own'] == true;
+    final mine = r['sender_id'] == _me;
+    // reply_to_is_own: the quoted message belongs to the person replying.
+    if (own == mine) return 'You';
+    if (!isGroup) return _otherName ?? 'Them';
+    final quotedId = _raw
+        .where((m) => m['id'] == r['reply_to_message_id'])
+        .map((m) => m['sender_id'] as String?)
+        .firstOrNull;
+    if (quotedId == _me) return 'You';
+    return _names[quotedId] ?? 'Member';
+  }
+
+  /// Name of the other person in a direct chat (for reply labels).
+  String? _otherName;
+  set otherName(String? v) => _otherName = v;
+
   /// Sends a text message (same row shape as the mobile app).
-  Future<void> sendText(String text) async {
+  Future<void> sendText(String text, {DemoMessage? replyTo}) async {
     final content = text.trim();
     if (content.isEmpty) return;
     setTyping(false);
@@ -269,6 +310,11 @@ class ConversationFeed extends ChangeNotifier {
       'message_type': 'text',
       'content': content,
       'client_id': clientId,
+      if (replyTo != null && replyTo.id.isNotEmpty) ...{
+        'reply_to_message_id': replyTo.id,
+        'reply_to_content': replyPreview(replyTo),
+        'reply_to_is_own': replyTo.isMine,
+      },
     };
     _pending.add({
       ...row,
@@ -283,6 +329,172 @@ class ConversationFeed extends ChangeNotifier {
       _pending.removeWhere((p) => p['client_id'] == clientId);
       _emit();
       rethrow;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Message actions (same rules and rows as the phone)
+  // ---------------------------------------------------------------------
+
+  /// React, change the reaction, or remove it when the same emoji is tapped.
+  Future<void> react(DemoMessage m, String emoji) async {
+    if (m.id.isEmpty || m.pending) return;
+    if (m.myReaction == emoji) {
+      await _sb
+          .from('message_reactions')
+          .delete()
+          .eq('message_id', m.id)
+          .eq('user_id', _me);
+    } else {
+      await _sb.from('message_reactions').upsert({
+        'message_id': m.id,
+        'user_id': _me,
+        'emoji': emoji,
+      }, onConflict: 'message_id,user_id');
+    }
+    await _loadReactions();
+    _emit();
+  }
+
+  Future<void> toggleStar(DemoMessage m) async {
+    if (m.isStarred) {
+      await _sb
+          .from('message_stars')
+          .delete()
+          .eq('user_id', _me)
+          .eq('message_id', m.id);
+      _stars.remove(m.id);
+    } else {
+      await _sb.from('message_stars').upsert({
+        'user_id': _me,
+        'message_id': m.id,
+      });
+      _stars.add(m.id);
+    }
+    _emit();
+  }
+
+  static const maxPins = 4;
+
+  /// Returns an error message, or null when done.
+  Future<String?> setPinned(DemoMessage m, bool pin) async {
+    if (pin) {
+      final pinned = _raw.where((r) => r['is_pinned'] == true).length;
+      if (pinned >= maxPins) return 'You can only pin up to $maxPins messages';
+    }
+    await _sb.rpc(
+      'set_messages_pinned',
+      params: {
+        'p_ids': [m.id],
+        'p_pin': pin,
+      },
+    );
+    return null;
+  }
+
+  /// Same edit window as the phone: 30 minutes, or 8 once someone replied.
+  bool canEdit(DemoMessage m) {
+    if (!m.isMine || m.kind != MessageKind.text || m.createdAt == null) {
+      return false;
+    }
+    final created = m.createdAt!;
+    final replied = _raw.any(
+      (r) =>
+          r['sender_id'] != _me &&
+          (DateTime.tryParse('${r['created_at']}')?.isAfter(created.toUtc()) ??
+              false),
+    );
+    final limit = Duration(minutes: replied ? 8 : 30);
+    return DateTime.now().difference(created) <= limit;
+  }
+
+  Future<void> edit(DemoMessage m, String text) async {
+    final content = text.trim();
+    if (content.isEmpty || content == m.text) return;
+    await _sb
+        .from('messages')
+        .update({'content': content, 'is_edited': true})
+        .eq('id', m.id);
+  }
+
+  /// Why "Delete for everyone" is not allowed, or null when it is.
+  /// The database enforces the same rules.
+  String? deleteBlockReason(DemoMessage m) {
+    if (!m.isMine) return 'Only your own messages can be deleted for everyone.';
+    final seen = DateTime.tryParse('${m.raw['seen_at'] ?? ''}');
+    if (seen == null) return null;
+    if (DateTime.now().toUtc().difference(seen.toUtc()) >
+        const Duration(minutes: 5)) {
+      return 'Seen more than 5 minutes ago, so it can only be deleted for you.';
+    }
+    final created = m.createdAt!.toUtc();
+    final window = _raw.where((r) {
+      final at = DateTime.tryParse('${r['created_at']}')?.toUtc();
+      return at != null &&
+          at.isAfter(created.subtract(const Duration(minutes: 5))) &&
+          !at.isAfter(created);
+    }).toList();
+    final senders = window.map((r) => r['sender_id']).toSet();
+    if (window.length > 7 && senders.length > 1) {
+      return 'Too many messages exchanged in 5 minutes, so it can only be '
+          'deleted for you.';
+    }
+    return null;
+  }
+
+  Future<void> deleteForEveryone(DemoMessage m) async {
+    await _sb.from('messages').update({'is_deleted': true}).eq('id', m.id);
+  }
+
+  Future<void> deleteForMe(DemoMessage m) async {
+    final current = List<String>.from(
+      ((m.raw['deleted_for_user_ids'] as List?) ?? const []).map((e) => '$e'),
+    );
+    if (current.contains(_me)) return;
+    current.add(_me);
+    await _sb
+        .from('messages')
+        .update({'deleted_for_user_ids': current})
+        .eq('id', m.id);
+  }
+
+  /// Forwards messages unchanged (media included) to chats and people.
+  static Future<void> forward(
+    List<DemoMessage> messages, {
+    List<String> conversationIds = const [],
+    List<String> userIds = const [],
+  }) async {
+    final sb = Supabase.instance.client;
+    final me = sb.auth.currentUser!.id;
+    final targets = [...conversationIds];
+    for (final u in userIds) {
+      targets.add(await ChatRepo.instance.directConversationWith(u));
+    }
+    const keep = [
+      'message_type',
+      'content',
+      'media_url',
+      'media_urls',
+      'thumbnail_url',
+      'media_size_bytes',
+      'media_duration_seconds',
+      'duration_seconds',
+      'media_pages',
+    ];
+    for (final c in targets.toSet()) {
+      for (final m in messages) {
+        final row = <String, dynamic>{
+          'conversation_id': c,
+          'sender_id': me,
+          'is_forwarded': true,
+        };
+        for (final k in keep) {
+          final v = m.raw[k];
+          if (v != null && !(v is String && v.isEmpty)) row[k] = v;
+        }
+        row['message_type'] ??= 'text';
+        await sb.from('messages').insert(row);
+      }
     }
   }
 
@@ -481,6 +693,7 @@ class ConversationFeed extends ChangeNotifier {
     _disposed = true;
     setTyping(false);
     _sub?.cancel();
+    _starSub?.cancel();
     _typingChannel?.unsubscribe();
     _metaChannel?.unsubscribe();
     for (final t in _typingTimers.values) {
@@ -489,4 +702,17 @@ class ConversationFeed extends ChangeNotifier {
     _typingOff?.cancel();
     super.dispose();
   }
+}
+
+/// Short text used when quoting a message in a reply.
+String replyPreview(DemoMessage m) {
+  final t = m.text.trim();
+  return switch (m.kind) {
+    MessageKind.image => t.isEmpty ? 'Photo' : 'Photo: $t',
+    MessageKind.video => t.isEmpty ? 'Video' : 'Video: $t',
+    MessageKind.voice => 'Voice message',
+    MessageKind.document => t.isEmpty ? 'Document' : t,
+    MessageKind.gift => 'Gift card',
+    _ => t,
+  };
 }

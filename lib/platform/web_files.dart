@@ -192,3 +192,36 @@ Future<int?> mediaDuration(Uint8List bytes, String mime) async {
     web.URL.revokeObjectURL(url);
   }
 }
+
+/// Downloads a file under [url] (fetched first, so the browser saves it
+/// with a proper name instead of opening it in a tab).
+Future<void> downloadUrl(String url, String fileName) async {
+  final res = await web.window.fetch(url.toJS).toDart;
+  if (!res.ok) throw Exception('Download failed (${res.status})');
+  final blob = await res.blob().toDart;
+  final href = web.URL.createObjectURL(blob);
+  final a = web.HTMLAnchorElement()
+    ..href = href
+    ..download = fileName
+    ..style.display = 'none';
+  web.document.body?.append(a);
+  a.click();
+  a.remove();
+  Timer(const Duration(seconds: 30), () => web.URL.revokeObjectURL(href));
+}
+
+/// A local object URL for a remote file, typed so the browser can show it
+/// inline (for example a PDF stored as application/octet-stream).
+Future<String> objectUrlFor(String url, String mime) async {
+  final res = await web.window.fetch(url.toJS).toDart;
+  if (!res.ok) throw Exception('Could not load file (${res.status})');
+  final buf = await res.arrayBuffer().toDart;
+  return web.URL.createObjectURL(bytesToBlob(buf.toDart.asUint8List(), mime));
+}
+
+/// File name from a storage URL, without the timestamp prefix.
+String fileNameFromUrl(String url, {String fallback = 'file'}) {
+  final path = Uri.tryParse(url)?.pathSegments.lastOrNull ?? '';
+  final name = Uri.decodeComponent(path).replaceFirst(RegExp(r'^\d+_'), '');
+  return name.isEmpty ? fallback : name;
+}
