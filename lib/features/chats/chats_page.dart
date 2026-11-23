@@ -11,6 +11,7 @@ import '../../widgets/resizable_width.dart';
 import '../../widgets/brand_logo.dart';
 import '../calls/call_screen.dart';
 import 'chat_dialogs.dart';
+import 'composer.dart';
 import 'contact_info_panel.dart';
 import 'message_bubble.dart';
 
@@ -352,6 +353,7 @@ class _ChatsPageState extends State<ChatsPage> {
             wallpaperUrl: _wallpapers[chat.id],
             typingText: _live ? _typingText(chat) : null,
             onTyping: _live ? () => _feed?.setTyping(true) : null,
+            feed: _live ? _feed : null,
             loading: _live && !(_feed?.loaded ?? false),
             messages: _live
                 ? (_feed?.messages ?? const [])
@@ -923,7 +925,10 @@ class _ConversationPane extends StatefulWidget {
     this.onTyping,
     this.loading = false,
     this.onBack,
+    this.feed,
   });
+
+  final ConversationFeed? feed;
 
   final DemoChat chat;
   final ChatThemeDef? theme;
@@ -1025,7 +1030,11 @@ class _ConversationPaneState extends State<_ConversationPane> {
                   ),
           ),
         ),
-        _Composer(onSend: widget.onSend, onTyping: widget.onTyping),
+        ChatComposer(
+          onSend: widget.onSend,
+          onTyping: widget.onTyping,
+          feed: widget.feed,
+        ),
       ],
     );
   }
@@ -1347,124 +1356,6 @@ class _DateChip extends StatelessWidget {
       child: Text(
         label,
         style: const TextStyle(fontSize: 13, color: AppColors.body),
-      ),
-    );
-  }
-}
-
-class _Composer extends StatefulWidget {
-  const _Composer({required this.onSend, this.onTyping});
-
-  final ValueChanged<String> onSend;
-  final VoidCallback? onTyping;
-
-  @override
-  State<_Composer> createState() => _ComposerState();
-}
-
-class _ComposerState extends State<_Composer> {
-  final _controller = TextEditingController();
-  final _focus = FocusNode();
-
-  void _submit() {
-    final text = _controller.text;
-    if (text.trim().isEmpty) return;
-    widget.onSend(text);
-    _controller.clear();
-    _focus.requestFocus();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    void soon(String what) => ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('$what is coming soon.')));
-    return Container(
-      color: const Color(0xFFF7F3FD),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-      child: Container(
-        height: 58,
-        padding: const EdgeInsets.only(left: 6, right: 6),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: AppColors.border),
-          boxShadow: bubbleShadow,
-        ),
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: 'Emoji',
-              onPressed: () => soon('Emoji picker'),
-              icon: const Icon(Icons.sentiment_satisfied_alt_outlined),
-              color: AppColors.body,
-            ),
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                focusNode: _focus,
-                onChanged: (v) {
-                  if (v.isNotEmpty) widget.onTyping?.call();
-                },
-                onSubmitted: (_) => _submit(),
-                style: const TextStyle(fontSize: 16),
-                decoration: const InputDecoration(
-                  hintText: 'Type a message...',
-                  hintStyle: TextStyle(color: AppColors.meta, fontSize: 16),
-                  border: InputBorder.none,
-                  isDense: true,
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: 'Attach',
-              onPressed: () => soon('Attachments'),
-              icon: const Icon(Icons.attach_file),
-              color: AppColors.body,
-            ),
-            IconButton(
-              tooltip: 'Camera',
-              onPressed: () => soon('Camera'),
-              icon: const Icon(Icons.photo_camera_outlined),
-              color: AppColors.body,
-            ),
-            IconButton(
-              tooltip: 'Voice note',
-              onPressed: () => soon('Voice notes'),
-              icon: const Icon(Icons.mic_none_outlined),
-              color: AppColors.body,
-            ),
-            const SizedBox(width: 4),
-            InkWell(
-              customBorder: const CircleBorder(),
-              onTap: _submit,
-              child: Container(
-                width: 46,
-                height: 46,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFAE5CF2), Color(0xFF8A3BE6)],
-                  ),
-                ),
-                child: const Icon(
-                  Icons.send_rounded,
-                  color: Colors.white,
-                  size: 22,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

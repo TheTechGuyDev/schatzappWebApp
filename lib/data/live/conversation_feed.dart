@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../platform/web_files.dart';
 import '../demo_data.dart';
 import 'chat_repo.dart';
 
@@ -282,6 +284,171 @@ class ConversationFeed extends ChangeNotifier {
       _emit();
       rethrow;
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Media (same storage paths and message rows as the phone)
+  // ---------------------------------------------------------------------
+
+  /// Uploads still in progress, shown as "Sending..." bubbles.
+  final List<String> uploading = [];
+
+  StorageFileApi get _bucket => _sb.storage.from('chat-media');
+
+  Future<String> _put(String path, Uint8List bytes, String mime) async {
+    await _bucket.uploadBinary(
+      path,
+      bytes,
+      fileOptions: FileOptions(upsert: true, contentType: mime),
+    );
+    return _bucket.getPublicUrl(path);
+  }
+
+  Future<T> _withUpload<T>(String label, Future<T> Function() job) async {
+    uploading.add(label);
+    _notify();
+    try {
+      return await job();
+    } finally {
+      uploading.remove(label);
+      _notify();
+    }
+  }
+
+  /// Photos and videos. Several photos become one image_group message,
+  /// each video its own message (like the phone). Caption on the first.
+  Future<void> sendMedia(List<PickedFile> files, String caption) async {
+    final photos = files.where((f) => f.isImage).toList();
+    final videos = files.where((f) => f.isVideo).toList();
+    final label = files.length == 1
+        ? (videos.isEmpty ? 'Sending photo...' : 'Sending video...')
+        : 'Sending ${files.length} files...';
+    await _withUpload(label, () async {
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      var captionUsed = false;
+      String? takeCaption() {
+        if (captionUsed || caption.trim().isEmpty) return null;
+        captionUsed = true;
+        return caption.trim();
+      }
+
+      for (var i = 0; i < videos.length; i++) {
+        final v = videos[i];
+        final ext = v.mime.contains('quicktime')
+            ? 'mov'
+            : (v.mime.contains('webm') ? 'webm' : 'mp4');
+        final url = await _put('chat_media/${stamp}_v$i.$ext', v.bytes, v.mime);
+        String? thumb;
+        final t = await videoThumbnail(v.bytes, v.mime);
+        if (t != null) {
+          thumb = await _put(
+            'chat_media/${stamp}_v${i}_thumb.jpg',
+            t,
+            'image/jpeg',
+          );
+        }
+        await _sb.from('messages').insert({
+          'conversation_id': conversationId,
+          'sender_id': _me,
+          'message_type': 'video',
+          'media_url': url,
+          'thumbnail_url': thumb,
+          'media_size_bytes': v.bytes.length,
+          'duration_seconds': await mediaDuration(v.bytes, v.mime),
+          'content': takeCaption(),
+        });
+      }
+
+      final urls = <String>[];
+      final thumbs = <String?>[];
+      for (var i = 0; i < photos.length; i++) {
+        final p = photos[i];
+        final small = await resizeImage(p.bytes, p.mime);
+        final isGif = p.mime == 'image/gif';
+        final base = 'chat_media/${stamp}_$i';
+        final url = await _put(
+          isGif ? '$base.gif' : '$base.jpg',
+          small,
+          isGif ? 'image/gif' : 'image/jpeg',
+        );
+        urls.add(url);
+        String? thumb;
+        if (!isGif) {
+          try {
+            final t = await resizeImage(
+              small,
+              'image/jpeg',
+              maxDim: 480,
+              quality: 0.7,
+            );
+            thumb = await _put('${base}_thumb.jpg', t, 'image/jpeg');
+          } catch (_) {}
+        }
+        thumbs.add(thumb);
+      }
+      if (urls.length == 1) {
+        await _sb.from('messages').insert({
+          'conversation_id': conversationId,
+          'sender_id': _me,
+          'message_type': 'image',
+          'media_url': urls.first,
+          'thumbnail_url': thumbs.first,
+          'content': takeCaption(),
+        });
+      } else if (urls.length > 1) {
+        await _sb.from('messages').insert({
+          'conversation_id': conversationId,
+          'sender_id': _me,
+          'message_type': 'image_group',
+          'media_url': urls.first,
+          'media_urls': urls,
+          'content': takeCaption(),
+        });
+      }
+    });
+  }
+
+  /// Any file sent as a document (stored under documents/ like the phone).
+  Future<void> sendDocument(PickedFile f) async {
+    await _withUpload('Sending ${f.name}...', () async {
+      final safe = f.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      final url = await _put(
+        'documents/${DateTime.now().millisecondsSinceEpoch}_$safe',
+        f.bytes,
+        f.mime,
+      );
+      await _sb.from('messages').insert({
+        'conversation_id': conversationId,
+        'sender_id': _me,
+        'message_type': 'document',
+        'content': f.name,
+        'media_url': url,
+        'media_size_bytes': f.bytes.length,
+      });
+    });
+  }
+
+  /// Voice note (recorded or an audio file), stored under voice_notes/.
+  Future<void> sendVoice(
+    Uint8List bytes,
+    String mime,
+    String ext,
+    int? seconds,
+  ) async {
+    await _withUpload('Sending voice note...', () async {
+      final url = await _put(
+        'voice_notes/${DateTime.now().millisecondsSinceEpoch}.$ext',
+        bytes,
+        mime,
+      );
+      await _sb.from('messages').insert({
+        'conversation_id': conversationId,
+        'sender_id': _me,
+        'message_type': 'voice_note',
+        'media_url': url,
+        'duration_seconds': seconds ?? await mediaDuration(bytes, mime),
+      });
+    });
   }
 
   /// Tells the other side we are typing (throttled), then stops after 3s.

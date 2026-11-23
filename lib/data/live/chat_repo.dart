@@ -67,9 +67,7 @@ class ChatRepo extends ChangeNotifier {
     try {
       me = await _sb
           .from('profiles')
-          .select(
-            'id, full_name, username, avatar_url, phone_number, about_text',
-          )
+          .select('id, full_name, username, avatar_url, phone_number')
           .eq('id', uid!)
           .maybeSingle();
       notifyListeners();
@@ -116,12 +114,11 @@ class ChatRepo extends ChangeNotifier {
         try {
           final p = await _sb
               .from('profiles')
-              .select('id, username, phone_number, about_text')
+              .select('id, username, phone_number')
               .inFilter('id', otherIds);
           for (final r in p) {
             final id = r['id'] as String;
             if ((r['phone_number'] ?? '') != '') phones[id] = r['phone_number'];
-            if ((r['about_text'] ?? '') != '') abouts[id] = r['about_text'];
             if ((r['username'] ?? '') != '') usernames[id] = r['username'];
           }
         } catch (_) {}
@@ -350,7 +347,9 @@ String previewFor(String type, String? content) {
           ? content!.trim()
           : 'Document';
     case 'call':
-      return 'Call';
+      return (content ?? '').toLowerCase().startsWith('video')
+          ? 'Video call'
+          : 'Voice call';
     case 'gift_card':
       return 'Gift card';
     case '':

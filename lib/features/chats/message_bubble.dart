@@ -50,14 +50,20 @@ class MessageBubble extends StatelessWidget {
         mine: mine,
         onTap: () => _openUrl(m.mediaUrl),
       ),
-      MessageKind.call => _FileChip(
-        icon: Icons.call_outlined,
-        title: m.text.isEmpty ? 'Call' : m.text,
-        subtitle: m.durationSeconds == null
-            ? null
-            : _duration(m.durationSeconds!),
-        mine: mine,
-      ),
+      MessageKind.call => () {
+        final c = _CallInfo.parse(m.text, mine);
+        return _FileChip(
+          icon: c.icon,
+          iconColor: c.missed ? AppColors.missed : null,
+          title: c.title,
+          subtitle:
+              c.status +
+              (m.durationSeconds != null && m.durationSeconds! > 0
+                  ? ' · ${_duration(m.durationSeconds!)}'
+                  : ''),
+          mine: mine,
+        );
+      }(),
       MessageKind.gift => _FileChip(
         icon: Icons.redeem_outlined,
         title: 'Gift card',
@@ -532,8 +538,10 @@ class _FileChip extends StatelessWidget {
     required this.mine,
     this.subtitle,
     this.onTap,
+    this.iconColor,
   });
 
+  final Color? iconColor;
   final IconData icon;
   final String title;
   final String? subtitle;
@@ -557,7 +565,10 @@ class _FileChip extends StatelessWidget {
                   : AppColors.accentSoft,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: mine ? Colors.white : AppColors.accent),
+            child: Icon(
+              icon,
+              color: iconColor ?? (mine ? Colors.white : AppColors.accent),
+            ),
           ),
           const SizedBox(width: 10),
           Flexible(
@@ -588,5 +599,40 @@ class _FileChip extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Call log rows are stored like "video:answered" or "voice:declined".
+class _CallInfo {
+  _CallInfo(this.title, this.status, this.icon, this.missed);
+
+  final String title;
+  final String status;
+  final IconData icon;
+  final bool missed;
+
+  static _CallInfo parse(String raw, bool mine) {
+    final parts = raw.toLowerCase().split(':');
+    final video = parts.first.contains('video');
+    final state = parts.length > 1 ? parts[1].trim() : '';
+    final title = video ? 'Video call' : 'Voice call';
+    final (String status, bool missed) = switch (state) {
+      'answered' || 'completed' || 'ended' => ('Answered', false),
+      'declined' || 'rejected' => (mine ? 'Declined' : 'Declined', !mine),
+      'missed' ||
+      'no_answer' ||
+      'unanswered' => (mine ? 'No answer' : 'Missed', !mine),
+      'cancelled' || 'canceled' => (mine ? 'Cancelled' : 'Missed', !mine),
+      'busy' => ('Busy', false),
+      _ => (state.isEmpty ? (mine ? 'Outgoing' : 'Incoming') : state, false),
+    };
+    final IconData icon = missed
+        ? (video
+              ? Icons.missed_video_call_outlined
+              : Icons.phone_missed_outlined)
+        : video
+        ? Icons.videocam_outlined
+        : (mine ? Icons.call_made : Icons.call_received);
+    return _CallInfo(title, status, icon, missed);
   }
 }
