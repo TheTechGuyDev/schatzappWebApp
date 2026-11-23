@@ -1,17 +1,21 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
+import '../../data/live/chat_repo.dart';
+import '../../data/live/conversation_feed.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/resizable_width.dart';
 import '../../widgets/brand_logo.dart';
-import '../../widgets/sunset_painter.dart';
 import '../calls/call_screen.dart';
 import 'chat_dialogs.dart';
 import 'contact_info_panel.dart';
+import 'message_bubble.dart';
 
-/// Chats tab (UI image 2). Uses placeholder data until the backend phase.
+/// Chats tab (UI image 2). Live data from the same Supabase tables as the
+/// phone, kept in sync with Realtime. Demo data only in the UI preview.
 class ChatsPage extends StatefulWidget {
   const ChatsPage({super.key});
 
@@ -24,9 +28,62 @@ class ChatsPage extends StatefulWidget {
 class _ChatsPageState extends State<ChatsPage> {
   ChatFilter _filter = ChatFilter.all;
   String _query = '';
-  String? _selectedId = 'kesta';
-  final List<DemoChat> _chats = List.of(demoChats);
-  final List<DemoChat> _privateChats = List.of(demoPrivateChats);
+  String? _selectedId = WebAuth.instance.isLive ? null : 'kesta';
+  final List<DemoChat> _demoChats = List.of(demoChats);
+  final List<DemoChat> _demoPrivate = List.of(demoPrivateChats);
+
+  bool get _live => WebAuth.instance.isLive;
+  ChatRepo get _repo => ChatRepo.instance;
+  List<DemoChat> get _chats => _live ? _repo.chats : _demoChats;
+  List<DemoChat> get _privateChats => _live ? _repo.lockedChats : _demoPrivate;
+
+  /// Live messages of the open chat.
+  ConversationFeed? _feed;
+  final Map<String, String> _wallpapers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    if (_live) {
+      _repo.addListener(_onData);
+      _repo.start();
+    }
+  }
+
+  @override
+  void dispose() {
+    _repo.removeListener(_onData);
+    _feed?.removeListener(_onData);
+    _feed?.dispose();
+    super.dispose();
+  }
+
+  void _onData() {
+    if (mounted) setState(() {});
+  }
+
+  void _openFeed(DemoChat c) {
+    if (_feed?.conversationId == c.id) return;
+    _feed?.removeListener(_onData);
+    _feed?.dispose();
+    _feed = ConversationFeed(c.id, isGroup: c.isGroup)..addListener(_onData);
+    _repo.chatAppearance(c.id).then((a) {
+      if (!mounted) return;
+      setState(() {
+        if (a.$1 != null && a.$1!.isNotEmpty) {
+          _themes[c.id] = a.$1!;
+        } else {
+          _themes.remove(c.id);
+        }
+        if (a.$2 != null && a.$2!.isNotEmpty) {
+          _wallpapers[c.id] = a.$2!;
+        } else {
+          _wallpapers.remove(c.id);
+        }
+      });
+    });
+  }
+
   final Map<String, List<DemoMessage>> _messages = {
     for (final e in demoMessages.entries) e.key: List.of(e.value),
   };
@@ -69,10 +126,16 @@ class _ChatsPageState extends State<ChatsPage> {
     return null;
   }
 
-  void _open(DemoChat c) => setState(() {
-    _selectedId = c.id;
-    _readIds.add(c.id);
-  });
+  void _open(DemoChat c) {
+    setState(() {
+      _selectedId = c.id;
+      _readIds.add(c.id);
+    });
+    if (_live) {
+      _openFeed(c);
+      _repo.markRead(c.id);
+    }
+  }
 
   void _toast(String msg) => ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
@@ -81,6 +144,12 @@ class _ChatsPageState extends State<ChatsPage> {
   void _send(String text) {
     final id = _selectedId;
     if (id == null || text.trim().isEmpty) return;
+    if (_live) {
+      _feed?.sendText(text).catchError((_) {
+        _toast('Message not sent. Check your connection and try again.');
+      });
+      return;
+    }
     final now = TimeOfDay.now();
     setState(() {
       (_messages[id] ??= []).add(
@@ -98,7 +167,8 @@ class _ChatsPageState extends State<ChatsPage> {
     if (!_privateUnlocked) {
       final ok = await showDialog<bool>(
         context: context,
-        builder: (_) => const PasswordGateDialog(),
+        builder: (_) =>
+            PasswordGateDialog(verify: _live ? _repo.verifyAppPassword : null),
       );
       if (ok != true || !mounted) return;
       _privateUnlocked = true;
@@ -120,6 +190,12 @@ class _ChatsPageState extends State<ChatsPage> {
   });
 
   Future<void> _newUser() async {
+    if (_live) {
+      _toast(
+        'Starting new chats on the web is coming next. Use the phone for now.',
+      );
+      return;
+    }
     final picked = await showDialog<List<DemoContact>>(
       context: context,
       builder: (_) => ContactPickerDialog(
@@ -149,6 +225,12 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   Future<void> _newGroup() async {
+    if (_live) {
+      _toast(
+        'Creating groups on the web is coming next. Use the phone for now.',
+      );
+      return;
+    }
     final g = await showDialog<NewGroup>(
       context: context,
       builder: (_) => CreateGroupDialog(privateGroup: _privateMode),
@@ -191,7 +273,17 @@ class _ChatsPageState extends State<ChatsPage> {
       builder: (_) => ChatThemeDialog(selected: _themes[chat.id]),
     );
     if (key == null || !mounted) return;
+    if (_live) {
+      try {
+        await _repo.setChatTheme(chat.id, key.isEmpty ? null : key);
+      } catch (_) {
+        _toast('Could not change the theme. Try again.');
+        return;
+      }
+    }
+    if (!mounted) return;
     setState(() {
+      _wallpapers.remove(chat.id);
       if (key.isEmpty) {
         _themes.remove(chat.id);
       } else {
@@ -209,6 +301,15 @@ class _ChatsPageState extends State<ChatsPage> {
       isGroup: chat.isGroup,
       video: video,
     );
+  }
+
+  String? _typingText(DemoChat chat) {
+    final names = _feed?.typing.values.toList() ?? const [];
+    if (names.isEmpty) return null;
+    if (!chat.isGroup) return 'typing...';
+    return names.length == 1
+        ? '${names.first} is typing...'
+        : '${names.length} people are typing...';
   }
 
   ChatThemeDef? _themeOf(DemoChat chat) {
@@ -237,6 +338,9 @@ class _ChatsPageState extends State<ChatsPage> {
       onClosePrivate: _closePrivate,
       onNewUser: _newUser,
       onNewGroup: _newGroup,
+      loading: _live && _repo.loading,
+      error: _live ? _repo.error : null,
+      onRetry: _repo.refresh,
     );
     final chat = _selected;
     final conversation = chat == null
@@ -245,7 +349,13 @@ class _ChatsPageState extends State<ChatsPage> {
             key: ValueKey(chat.id),
             chat: chat,
             theme: _themeOf(chat),
-            messages: _messages[chat.id] ?? const [],
+            wallpaperUrl: _wallpapers[chat.id],
+            typingText: _live ? _typingText(chat) : null,
+            onTyping: _live ? () => _feed?.setTyping(true) : null,
+            loading: _live && !(_feed?.loaded ?? false),
+            messages: _live
+                ? (_feed?.messages ?? const [])
+                : (_messages[chat.id] ?? const []),
             onSend: _send,
             onOpenInfo: () => setState(() => _infoOpen = true),
             onCall: (video) => _call(chat, video),
@@ -342,7 +452,14 @@ class _ChatListPanel extends StatelessWidget {
     required this.onClosePrivate,
     required this.onNewUser,
     required this.onNewGroup,
+    this.loading = false,
+    this.error,
+    this.onRetry,
   });
+
+  final bool loading;
+  final String? error;
+  final VoidCallback? onRetry;
 
   final List<DemoChat> chats;
   final ChatFilter filter;
@@ -446,7 +563,27 @@ class _ChatListPanel extends StatelessWidget {
               ),
             ),
           Expanded(
-            child: chats.isEmpty
+            child: loading
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppColors.accent),
+                  )
+                : error != null && chats.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          error!,
+                          style: const TextStyle(color: AppColors.meta),
+                        ),
+                        TextButton(
+                          onPressed: onRetry,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                : chats.isEmpty
                 ? Center(
                     child: Text(
                       privateMode
@@ -643,6 +780,7 @@ class _ChatTile extends StatelessWidget {
                 Avatar(
                   name: chat.name,
                   color: chat.avatarColor,
+                  photoUrl: chat.avatarUrl,
                   isGroup: chat.isGroup,
                   isOnline: chat.isOnline,
                   size: 54,
@@ -780,11 +918,19 @@ class _ConversationPane extends StatefulWidget {
     required this.onChatTheme,
     required this.onCloseChat,
     this.theme,
+    this.wallpaperUrl,
+    this.typingText,
+    this.onTyping,
+    this.loading = false,
     this.onBack,
   });
 
   final DemoChat chat;
   final ChatThemeDef? theme;
+  final String? wallpaperUrl;
+  final String? typingText;
+  final VoidCallback? onTyping;
+  final bool loading;
   final List<DemoMessage> messages;
   final ValueChanged<String> onSend;
   final VoidCallback onOpenInfo;
@@ -828,6 +974,7 @@ class _ConversationPaneState extends State<_ConversationPane> {
       children: [
         _ConversationHeader(
           chat: chat,
+          typingText: widget.typingText,
           onBack: widget.onBack,
           onOpenInfo: widget.onOpenInfo,
           onCall: widget.onCall,
@@ -837,31 +984,48 @@ class _ConversationPaneState extends State<_ConversationPane> {
         Expanded(
           child: _WallpaperBackground(
             theme: widget.theme,
-            child: ListView(
-              controller: _scroll,
-              padding: EdgeInsets.fromLTRB(
-                compact ? 12 : 28,
-                14,
-                compact ? 12 : 28,
-                14,
-              ),
-              children: [
-                const Center(child: _DateChip('Today')),
-                const SizedBox(height: 10),
-                if (widget.messages.isEmpty)
-                  const _EmptyThreadHint()
-                else
-                  for (final m in widget.messages)
-                    _MessageBubble(
-                      message: m,
-                      compact: compact,
-                      theme: widget.theme,
+            wallpaperUrl: widget.wallpaperUrl,
+            child: widget.loading
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppColors.accent),
+                  )
+                : ListView(
+                    controller: _scroll,
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 12 : 28,
+                      14,
+                      compact ? 12 : 28,
+                      14,
                     ),
-              ],
-            ),
+                    children: [
+                      if (widget.messages.isEmpty)
+                        const _EmptyThreadHint()
+                      else
+                        for (var i = 0; i < widget.messages.length; i++) ...[
+                          if (i == 0 ||
+                              !_sameDay(
+                                widget.messages[i - 1].createdAt,
+                                widget.messages[i].createdAt,
+                              ))
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Center(
+                                child: _DateChip(
+                                  _dayLabel(widget.messages[i].createdAt),
+                                ),
+                              ),
+                            ),
+                          MessageBubble(
+                            message: widget.messages[i],
+                            compact: compact,
+                            theme: widget.theme,
+                          ),
+                        ],
+                    ],
+                  ),
           ),
         ),
-        _Composer(onSend: widget.onSend),
+        _Composer(onSend: widget.onSend, onTyping: widget.onTyping),
       ],
     );
   }
@@ -870,6 +1034,7 @@ class _ConversationPaneState extends State<_ConversationPane> {
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.chat,
+    this.typingText,
     required this.onOpenInfo,
     required this.onCall,
     required this.onChatTheme,
@@ -878,6 +1043,7 @@ class _ConversationHeader extends StatelessWidget {
   });
 
   final DemoChat chat;
+  final String? typingText;
   final VoidCallback onOpenInfo;
   final ValueChanged<bool> onCall;
   final VoidCallback onChatTheme;
@@ -917,6 +1083,7 @@ class _ConversationHeader extends StatelessWidget {
                       Avatar(
                         name: chat.name,
                         color: chat.avatarColor,
+                        photoUrl: chat.avatarUrl,
                         isGroup: chat.isGroup,
                         size: 48,
                       ),
@@ -937,7 +1104,16 @@ class _ConversationHeader extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 3),
-                            if (chat.isOnline)
+                            if (typingText != null)
+                              Text(
+                                typingText!,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontStyle: FontStyle.italic,
+                                  color: AppColors.accent,
+                                ),
+                              )
+                            else if (chat.isOnline)
                               const Row(
                                 children: [
                                   Icon(
@@ -1025,17 +1201,39 @@ class _ConversationHeader extends StatelessWidget {
 }
 
 class _WallpaperBackground extends StatelessWidget {
-  const _WallpaperBackground({required this.child, this.theme});
+  const _WallpaperBackground({
+    required this.child,
+    this.theme,
+    this.wallpaperUrl,
+  });
 
   final Widget child;
   final ChatThemeDef? theme;
 
+  /// Custom photo the user picked on the phone (overrides the theme image).
+  final String? wallpaperUrl;
+
   @override
   Widget build(BuildContext context) {
     final t = theme;
-    return CustomPaint(
-      painter: t == null ? _WallpaperPainter() : _ThemePainter(t),
-      child: child,
+    final url = wallpaperUrl ?? t?.wallpaper;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CustomPaint(
+            painter: t == null ? _WallpaperPainter() : _ThemePainter(t),
+          ),
+        ),
+        if (url != null && url.isNotEmpty)
+          Positioned.fill(
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          ),
+        Positioned.fill(child: child),
+      ],
     );
   }
 }
@@ -1154,166 +1352,11 @@ class _DateChip extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({
-    required this.message,
-    required this.compact,
-    this.theme,
-  });
-
-  final DemoMessage message;
-  final bool compact;
-  final ChatThemeDef? theme;
-
-  @override
-  Widget build(BuildContext context) {
-    final mine = message.isMine;
-    final maxW = MediaQuery.sizeOf(context).width * (compact ? 0.78 : 0.42);
-
-    if (message.kind == MessageKind.image) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          mainAxisAlignment: mine
-              ? MainAxisAlignment.end
-              : MainAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: _bubbleShadow,
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(13),
-                child: SizedBox(
-                  width: compact ? 240 : 276,
-                  height: compact ? 150 : 164,
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: CustomPaint(painter: SunsetPainter()),
-                      ),
-                      Positioned(
-                        right: 10,
-                        bottom: 8,
-                        child: Text(
-                          message.time,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            shadows: [
-                              Shadow(color: Colors.black54, blurRadius: 4),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            if (!mine) ...[
-              const SizedBox(width: 14),
-              Container(
-                width: 38,
-                height: 38,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFE9E5F1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.reply,
-                  textDirection: TextDirection.rtl,
-                  size: 20,
-                  color: AppColors.body,
-                ),
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-
-    final textColor = mine ? Colors.white : AppColors.heading;
-    final metaColor = mine
-        ? Colors.white.withValues(alpha: 0.85)
-        : AppColors.meta;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Align(
-        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxW),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: mine ? theme?.sender : (theme?.receiver ?? Colors.white),
-              gradient: mine && theme == null
-                  ? const LinearGradient(
-                      colors: [Color(0xFFA557EE), Color(0xFF8E3FE8)],
-                    )
-                  : null,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: Radius.circular(mine ? 16 : 4),
-                bottomRight: Radius.circular(mine ? 4 : 16),
-              ),
-              boxShadow: mine ? null : _bubbleShadow,
-            ),
-            child: Wrap(
-              alignment: WrapAlignment.end,
-              crossAxisAlignment: WrapCrossAlignment.end,
-              spacing: 12,
-              runSpacing: 2,
-              children: [
-                Text(
-                  message.text,
-                  style: TextStyle(fontSize: 16, color: textColor, height: 1.3),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 1),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        message.time,
-                        style: TextStyle(fontSize: 12, color: metaColor),
-                      ),
-                      if (mine) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          message.isRead ? Icons.done_all : Icons.done,
-                          size: 16,
-                          color: metaColor,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-final _bubbleShadow = [
-  BoxShadow(
-    color: const Color(0xFF5B1CD3).withValues(alpha: 0.06),
-    blurRadius: 10,
-    offset: const Offset(0, 3),
-  ),
-];
-
 class _Composer extends StatefulWidget {
-  const _Composer({required this.onSend});
+  const _Composer({required this.onSend, this.onTyping});
 
   final ValueChanged<String> onSend;
+  final VoidCallback? onTyping;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -1353,7 +1396,7 @@ class _ComposerState extends State<_Composer> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(30),
           border: Border.all(color: AppColors.border),
-          boxShadow: _bubbleShadow,
+          boxShadow: bubbleShadow,
         ),
         child: Row(
           children: [
@@ -1367,6 +1410,9 @@ class _ComposerState extends State<_Composer> {
               child: TextField(
                 controller: _controller,
                 focusNode: _focus,
+                onChanged: (v) {
+                  if (v.isNotEmpty) widget.onTyping?.call();
+                },
                 onSubmitted: (_) => _submit(),
                 style: const TextStyle(fontSize: 16),
                 decoration: const InputDecoration(
@@ -1422,4 +1468,33 @@ class _ComposerState extends State<_Composer> {
       ),
     );
   }
+}
+
+bool _sameDay(DateTime? a, DateTime? b) {
+  if (a == null || b == null) return true; // demo messages have no date
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+String _dayLabel(DateTime? d) {
+  if (d == null) return 'Today';
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final diff = today.difference(DateTime(d.year, d.month, d.day)).inDays;
+  if (diff == 0) return 'Today';
+  if (diff == 1) return 'Yesterday';
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${d.day} ${months[d.month - 1]} ${d.year}';
 }

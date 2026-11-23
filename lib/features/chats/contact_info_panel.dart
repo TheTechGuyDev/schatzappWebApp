@@ -80,6 +80,7 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                 child: Avatar(
                   name: c.name,
                   color: c.avatarColor,
+                  photoUrl: c.avatarUrl,
                   isGroup: group,
                   size: 104,
                 ),

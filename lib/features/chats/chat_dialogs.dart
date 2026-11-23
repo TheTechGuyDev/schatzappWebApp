@@ -494,7 +494,10 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
 // ---------------------------------------------------------------------------
 
 class PasswordGateDialog extends StatefulWidget {
-  const PasswordGateDialog({super.key});
+  const PasswordGateDialog({super.key, this.verify});
+
+  /// Real check (verify_app_password RPC). Null in the UI preview.
+  final Future<bool> Function(String password)? verify;
 
   @override
   State<PasswordGateDialog> createState() => _PasswordGateDialogState();
@@ -511,14 +514,29 @@ class _PasswordGateDialogState extends State<PasswordGateDialog> {
     super.dispose();
   }
 
-  void _unlock() {
-    // Placeholder: any password of 4+ characters unlocks. The real check
-    // calls the verify_app_password RPC in the backend phase.
-    if (_pw.text.length < 4) {
-      setState(() => _error = 'Incorrect password');
+  bool _checking = false;
+
+  Future<void> _unlock() async {
+    if (_checking) return;
+    final verify = widget.verify;
+    if (verify == null) {
+      // UI preview only.
+      if (_pw.text.length < 4) {
+        setState(() => _error = 'Incorrect password');
+        return;
+      }
+      Navigator.of(context).pop(true);
       return;
     }
-    Navigator.of(context).pop(true);
+    setState(() => _checking = true);
+    final ok = await verify(_pw.text);
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (ok) {
+      Navigator.of(context).pop(true);
+    } else {
+      setState(() => _error = 'Incorrect password');
+    }
   }
 
   @override

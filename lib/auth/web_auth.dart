@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/live/chat_repo.dart';
 import 'device_info.dart';
 
 /// Web session state for SchatzApp Web.
@@ -39,6 +40,10 @@ class WebAuth extends ChangeNotifier {
 
   /// Shown on the sign-in page after an automatic logout.
   String? logoutReason;
+
+  /// Signed in with a real account (not the demo preview).
+  bool get isLive =>
+      !demoMode && _sb.auth.currentSession != null && _deviceId != null;
 
   bool get signedIn =>
       demoMode || (_sb.auth.currentSession != null && _deviceId != null);
@@ -336,6 +341,7 @@ class WebAuth extends ChangeNotifier {
       await _sb.auth.signOut(scope: SignOutScope.local);
     } catch (_) {}
     logoutReason = reason;
+    await ChatRepo.instance.stop();
     await _clearLocal();
     notifyListeners();
   }

@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../data/demo_data.dart';
 import '../auth/web_auth.dart';
+import '../data/live/chat_repo.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar.dart';
 import '../widgets/brand_logo.dart';
@@ -49,6 +50,12 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   bool _collapsed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (WebAuth.instance.isLive) ChatRepo.instance.start();
+  }
 
   int get _index {
     final i = _navItems.indexWhere((n) => widget.location.startsWith(n.path));
@@ -207,15 +214,19 @@ class _Rail extends StatelessWidget {
             ),
             Padding(
               padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 20),
-              child: collapsed
-                  ? const Center(
-                      child: Avatar(
-                        name: demoCurrentUserName,
-                        size: 46,
-                        isOnline: true,
-                      ),
-                    )
-                  : const _UserTile(),
+              child: ListenableBuilder(
+                listenable: ChatRepo.instance,
+                builder: (_, _) => collapsed
+                    ? Center(
+                        child: Avatar(
+                          name: _myName(),
+                          photoUrl: _myAvatar(),
+                          size: 46,
+                          isOnline: true,
+                        ),
+                      )
+                    : const _UserTile(),
+              ),
             ),
           ],
         ),
@@ -326,15 +337,15 @@ class _UserTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Avatar(name: demoCurrentUserName, size: 46),
+        Avatar(name: _myName(), photoUrl: _myAvatar(), size: 46),
         const SizedBox(width: 12),
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                demoCurrentUserName,
+                _myName(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -407,3 +418,12 @@ class ShellPanel extends StatelessWidget {
     );
   }
 }
+
+/// Signed-in user's name and photo (demo name in the UI preview).
+String _myName() {
+  final n = (ChatRepo.instance.me?['full_name'] as String?)?.trim();
+  if (n != null && n.isNotEmpty) return n;
+  return WebAuth.instance.isLive ? 'My account' : demoCurrentUserName;
+}
+
+String? _myAvatar() => ChatRepo.instance.me?['avatar_url'] as String?;

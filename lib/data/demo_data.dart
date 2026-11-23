@@ -23,6 +23,12 @@ class DemoChat {
     this.about = 'Hey there! I am using SchatzApp.',
     this.members = const [],
     this.mediaCount = 0,
+    this.avatarUrl,
+    this.otherUserId,
+    this.isLocked = false,
+    this.isPinned = false,
+    this.isMuted = false,
+    this.lastAt,
     this.username = '',
     this.links = const [],
     this.groupsInCommon = 0,
@@ -55,6 +61,16 @@ class DemoChat {
 
   final String username;
 
+  /// Real profile/group photo (live data).
+  final String? avatarUrl;
+
+  /// Other person in a 1:1 chat (live data).
+  final String? otherUserId;
+  final bool isLocked;
+  final bool isPinned;
+  final bool isMuted;
+  final DateTime? lastAt;
+
   /// Links shared in this chat: (title, url).
   final List<(String, String)> links;
 
@@ -62,7 +78,7 @@ class DemoChat {
   final int mutualContacts;
 }
 
-enum MessageKind { text, image }
+enum MessageKind { text, image, video, voice, document, call, gift, other }
 
 class DemoMessage {
   const DemoMessage({
@@ -71,6 +87,18 @@ class DemoMessage {
     required this.isMine,
     this.kind = MessageKind.text,
     this.isRead = true,
+    this.id = '',
+    this.mediaUrl,
+    this.mediaUrls = const [],
+    this.thumbUrl,
+    this.senderName,
+    this.durationSeconds,
+    this.pending = false,
+    this.createdAt,
+    this.reactions = const [],
+    this.replyTo,
+    this.isEdited = false,
+    this.isForwarded = false,
   });
 
   final String text;
@@ -78,6 +106,24 @@ class DemoMessage {
   final bool isMine;
   final MessageKind kind;
   final bool isRead;
+  final String id;
+  final String? mediaUrl;
+  final List<String> mediaUrls;
+  final String? thumbUrl;
+
+  /// Shown above incoming bubbles in groups.
+  final String? senderName;
+  final int? durationSeconds;
+
+  /// Still sending.
+  final bool pending;
+  final DateTime? createdAt;
+
+  /// Emoji reactions on this message.
+  final List<String> reactions;
+  final String? replyTo;
+  final bool isEdited;
+  final bool isForwarded;
 }
 
 const demoChats = <DemoChat>[
@@ -444,9 +490,13 @@ class ChatThemeDef {
     required this.sender,
     required this.receiver,
     required this.background,
+    this.wallpaper,
   });
 
   final String key;
+
+  /// Same wallpaper image the phone uses for this theme.
+  final String? wallpaper;
   final Color sender;
   final Color receiver;
   final Color background;
@@ -460,30 +510,35 @@ const chatThemes = <ChatThemeDef>[
     sender: Color(0xFFED50E4),
     receiver: Color(0xFFF1F5F9),
     background: Color(0xFFFCE9F6),
+    wallpaper: 'https://storage.googleapis.com/flutterflow-io-6f20.appspot.com/projects/nexu-xidy5i/assets/hs3ncoawy90q/schatzapp_wallpaper..png',
   ),
   ChatThemeDef(
     key: 'theme2',
     sender: Color(0xFFED50E4),
     receiver: Color(0xFFF1F5F9),
     background: Color(0xFFFDEFF8),
+    wallpaper: 'https://storage.googleapis.com/flutterflow-io-6f20.appspot.com/projects/nexu-xidy5i/assets/okzb2earxxuk/.4.png',
   ),
   ChatThemeDef(
     key: 'theme3',
     sender: Color(0xFF3B82F6),
     receiver: Color(0xFFFFFFFF),
     background: Color(0xFFEBF1FE),
+    wallpaper: 'https://storage.googleapis.com/flutterflow-io-6f20.appspot.com/projects/nexu-xidy5i/assets/pt8bmcae9po5/schatzapp_wallpaper.3.png',
   ),
   ChatThemeDef(
     key: 'theme4',
     sender: Color(0xFF0E8BAB),
     receiver: Color(0xFFE2E8F0),
     background: Color(0xFFE9F4F7),
+    wallpaper: 'https://storage.googleapis.com/flutterflow-io-6f20.appspot.com/projects/nexu-xidy5i/assets/f3oes5poj8fa/schatzapp_wallpaper.2.png',
   ),
   ChatThemeDef(
     key: 'theme5',
     sender: Color(0xFF935CCC),
     receiver: Color(0xFFF0F0F0),
     background: Color(0xFFFAF4EA),
+    wallpaper: 'https://storage.googleapis.com/flutterflow-io-6f20.appspot.com/projects/nexu-xidy5i/assets/f62pmt3pghhs/schatzapp_wallpaper.png',
   ),
 ];
 
