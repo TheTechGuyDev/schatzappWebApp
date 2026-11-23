@@ -123,7 +123,7 @@ class _PhoneLoginContentState extends State<PhoneLoginContent> {
       _otp.clear();
       setState(() {
         _busy = false;
-        _error = e is String ? e : 'That code did not work. Try again.';
+        _error = e is String ? e : 'Something went wrong ($e). Try again.';
       });
     }
   }

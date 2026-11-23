@@ -173,14 +173,21 @@ class WebAuth extends ChangeNotifier {
     if (r['ok'] != true || r['access_token'] == null) {
       throw (r['message'] as String?) ?? 'Could not sign in. Try again.';
     }
-    await _sb.auth.setSession(
-      r['refresh_token'] as String,
-      accessToken: r['access_token'] as String,
-    );
-    _deviceId = r['device_id'] as String;
-    _expiresAt = DateTime.parse(r['device_expires_at'] as String).toLocal();
-    await _prefs.setString(_kDeviceId, _deviceId!);
-    await _prefs.setString(_kExpires, _expiresAt!.toIso8601String());
+    try {
+      await _sb.auth.setSession(
+        r['refresh_token'] as String,
+        accessToken: r['access_token'] as String,
+      );
+      _deviceId = '${r['device_id']}';
+      _expiresAt = DateTime.parse('${r['device_expires_at']}').toLocal();
+      await _prefs.setString(_kDeviceId, _deviceId!);
+      await _prefs.setString(_kExpires, _expiresAt!.toIso8601String());
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('codeLogin session error: $e\n$st');
+      throw 'Your code was accepted but the session could not start '
+          '($e). Please try again.';
+    }
     demoMode = false;
     logoutReason = null;
     _markActive(save: true);
