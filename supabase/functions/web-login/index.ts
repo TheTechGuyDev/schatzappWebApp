@@ -16,6 +16,8 @@
 // Rules: max 7 active web devices per account; web login lasts 7 days
 // ("Keep me signed in") or 24 hours; 4 hours idle logs out (SQL heartbeat
 // + 10-minute sweep). The service_role key never leaves this function.
+// Sessions are opened with a one-time sign-in link, never by changing the
+// password (a password change signs the user out on every device).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -217,9 +219,13 @@ type DeviceInfo = {
 };
 
 /** Opens a separate web session for a user and registers the browser as a
- *  linked device. Phone-number accounts have no email, so: set a random
- *  one-time password, sign in with it once, then replace it with another
- *  random value nobody knows. */
+ *  linked device.
+ *
+ *  It never touches the password: changing a password signs the user out
+ *  everywhere (that logged the phone out). Instead it creates a one-time
+ *  sign-in link and redeems it here. Phone-only accounts have no email, so
+ *  a private placeholder email is added for a moment and removed right
+ *  after; nothing is ever sent to it. */
 async function openWebSession(
   userId: string,
   info: DeviceInfo,
@@ -230,25 +236,51 @@ async function openWebSession(
   const user = u?.user;
   if (!user) return fail("server_error", "Account not found", 500);
 
-  const tempPassword = randomToken(24);
-  const { error: pwErr } = await admin.auth.admin.updateUserById(user.id, {
-    password: tempPassword,
-  });
-  if (pwErr) return fail("server_error", "Could not start session", 500);
-
-  const signer = createClient(SUPABASE_URL, ANON_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const creds = user.phone
-    ? { phone: user.phone, password: tempPassword }
-    : { email: user.email!, password: tempPassword };
-  const { data: s, error: sErr } = await signer.auth.signInWithPassword(creds);
-
-  await admin.auth.admin.updateUserById(user.id, { password: randomToken(32) });
-
-  if (sErr || !s?.session) {
-    return fail("server_error", "Could not start session", 500);
+  let email = user.email ?? "";
+  const placeholder = !email;
+  if (placeholder) {
+    email = `web-${user.id}@link.schatzapp.invalid`;
+    const { error } = await admin.auth.admin.updateUserById(user.id, {
+      email,
+      email_confirm: true,
+    });
+    if (error) {
+      console.error("placeholder email", error);
+      return fail("server_error", "Could not start session", 500);
+    }
   }
+
+  let session: { access_token: string; refresh_token: string } | null = null;
+  try {
+    const { data: link, error: lErr } = await admin.auth.admin.generateLink({
+      type: "magiclink",
+      email,
+    });
+    const tokenHash = link?.properties?.hashed_token;
+    if (lErr || !tokenHash) {
+      console.error("generateLink", lErr);
+    } else {
+      const signer = createClient(SUPABASE_URL, ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: v, error: vErr } = await signer.auth.verifyOtp({
+        type: "magiclink",
+        token_hash: tokenHash,
+      });
+      if (vErr) console.error("verifyOtp", vErr);
+      if (v?.session) session = v.session;
+    }
+  } finally {
+    if (placeholder) {
+      const { error } = await admin.rpc("web_clear_link_email", {
+        p_user: user.id,
+        p_email: email,
+      });
+      if (error) console.error("clear placeholder email", error);
+    }
+  }
+  if (!session) return fail("server_error", "Could not start session", 500);
+  const s = { session };
 
   const deviceToken = randomToken();
   const expiresAt = new Date(
