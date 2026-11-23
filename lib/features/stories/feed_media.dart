@@ -169,7 +169,7 @@ class _BlurredBackground extends StatelessWidget {
       children: [
         ImageFiltered(
           imageFilter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-          child: Image.asset(asset, fit: BoxFit.cover),
+          child: _img(asset, BoxFit.cover),
         ),
         Container(color: Colors.black.withValues(alpha: 0.28)),
       ],
@@ -196,11 +196,7 @@ class _ImagePage extends StatelessWidget {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(5),
-              child: Image.asset(
-                media.url,
-                fit: BoxFit.contain,
-                filterQuality: FilterQuality.medium,
-              ),
+              child: _img(media.url, BoxFit.contain),
             ),
           ),
         ),
@@ -222,9 +218,9 @@ class _VideoPage extends StatefulWidget {
 }
 
 class _VideoPageState extends State<_VideoPage> {
-  late final VideoPlayerController _c = VideoPlayerController.asset(
-    widget.media.url,
-  );
+  late final VideoPlayerController _c = widget.media.isNetwork
+      ? VideoPlayerController.networkUrl(Uri.parse(widget.media.url))
+      : VideoPlayerController.asset(widget.media.url);
   bool _ready = false;
   bool _userPaused = false;
 
@@ -366,3 +362,13 @@ class _RoundButton extends StatelessWidget {
     );
   }
 }
+
+/// Asset (preview) or network (live) image.
+Widget _img(String src, BoxFit fit) => src.startsWith('http')
+    ? Image.network(
+        src,
+        fit: fit,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, _, _) => Container(color: const Color(0xFF1E1530)),
+      )
+    : Image.asset(src, fit: fit, filterQuality: FilterQuality.medium);

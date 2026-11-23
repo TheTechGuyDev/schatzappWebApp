@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../data/live/call_service.dart';
 import '../data/live/chat_repo.dart';
+import '../data/live/wallet_repo.dart';
 import 'device_info.dart';
 
 /// Web session state for SchatzApp Web.
@@ -346,6 +347,7 @@ class WebAuth extends ChangeNotifier {
     } catch (_) {}
     logoutReason = reason;
     await ChatRepo.instance.stop();
+    await WalletRepo.instance.stop();
     await _clearLocal();
     notifyListeners();
   }

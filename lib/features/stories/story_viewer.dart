@@ -1,4 +1,8 @@
+import 'dart:ui' as ui;
+
+import 'package:google_fonts/google_fonts.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../data/demo_data.dart';
 import '../../widgets/avatar.dart';
@@ -10,6 +14,7 @@ Future<void> showStoryViewer(
   required List<DemoStory> stories,
   int startIndex = 0,
   bool isMine = false,
+  StoryHooks hooks = const StoryHooks(),
 }) {
   return showGeneralDialog<void>(
     context: context,
@@ -26,6 +31,7 @@ Future<void> showStoryViewer(
               stories: stories,
               startIndex: startIndex,
               isMine: isMine,
+              hooks: hooks,
               onClose: () => Navigator.of(dialogContext).pop(),
             ),
           ),
@@ -35,6 +41,28 @@ Future<void> showStoryViewer(
     transitionBuilder: (_, a, _, child) =>
         FadeTransition(opacity: a, child: child),
   );
+}
+
+/// What the player can do with live stories (all optional in preview).
+class StoryHooks {
+  const StoryHooks({
+    this.onViewed,
+    this.onReply,
+    this.onReact,
+    this.reactions,
+    this.onViewers,
+    this.onDelete,
+  });
+
+  final void Function(DemoStory s, StoryItem item)? onViewed;
+  final Future<void> Function(DemoStory s, StoryItem item, String text)?
+  onReply;
+  final Future<void> Function(StoryItem item, String type)? onReact;
+
+  /// My reactions on a story (favorite / peace / thumbs).
+  final Future<Set<String>> Function(StoryItem item)? reactions;
+  final void Function(StoryItem item)? onViewers;
+  final Future<void> Function(StoryItem item)? onDelete;
 }
 
 /// Story player (mobile users_story page): progress bars, auto-advance to
@@ -50,8 +78,10 @@ class StoryPlayer extends StatefulWidget {
     this.isMine = false,
     this.onPersonChanged,
     this.showArrows = true,
+    this.hooks = const StoryHooks(),
   });
 
+  final StoryHooks hooks;
   final List<DemoStory> stories;
   final int startIndex;
   final bool isMine;
@@ -80,11 +110,42 @@ class _StoryPlayerState extends State<StoryPlayer>
 
   DemoStory get _story => widget.stories[_person];
 
+  /// My reactions on the current story.
+  Set<String> _mine = {};
+
+  StoryItem get _current => _story.items[_item];
+
   @override
   void initState() {
     super.initState();
     _replyFocus.addListener(() => _setPaused(_replyFocus.hasFocus));
     _progress.forward();
+    _onShown();
+  }
+
+  /// Marks the story viewed and loads my reactions on it.
+  void _onShown() {
+    final item = _current;
+    final h = widget.hooks;
+    _progress.duration = const Duration(seconds: 6);
+    if (!widget.isMine) h.onViewed?.call(_story, item);
+    _mine = {};
+    h.reactions
+        ?.call(item)
+        .then((m) {
+          if (mounted && identical(_current, item)) setState(() => _mine = m);
+        })
+        .catchError((Object _) {});
+  }
+
+  /// Videos play for their own length (up to 60 seconds).
+  void _setVideoLength(Duration d) {
+    final len = d > const Duration(seconds: 60)
+        ? const Duration(seconds: 60)
+        : (d < const Duration(seconds: 3) ? const Duration(seconds: 3) : d);
+    final v = _progress.value;
+    _progress.duration = len;
+    if (!_paused) _progress.forward(from: v);
   }
 
   @override
@@ -102,6 +163,7 @@ class _StoryPlayerState extends State<StoryPlayer>
   }
 
   void _restart() {
+    _onShown();
     _progress
       ..reset()
       ..forward();
@@ -143,16 +205,36 @@ class _StoryPlayerState extends State<StoryPlayer>
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(content: Text(msg)));
 
-  void _sendReply([String? emoji]) {
-    final text = emoji ?? _reply.text.trim();
+  Future<void> _sendReply() async {
+    final text = _reply.text.trim();
     if (text.isEmpty) return;
     _reply.clear();
     _replyFocus.unfocus();
-    _toast(
-      emoji != null
-          ? 'Reacted $emoji to ${_story.name}'
-          : 'Reply sent to ${_story.name}',
-    );
+    final h = widget.hooks.onReply;
+    if (h == null) {
+      _toast('Reply sent to ${_story.name}');
+      return;
+    }
+    try {
+      await h(_story, _current, text);
+      _toast('Reply sent to ${_story.name}');
+    } catch (_) {
+      _toast('Could not send your reply. Try again.');
+    }
+  }
+
+  Future<void> _react(String type) async {
+    final h = widget.hooks.onReact;
+    final was = _mine.contains(type);
+    setState(() => was ? _mine.remove(type) : _mine.add(type));
+    if (h == null) return;
+    try {
+      await h(_current, type);
+    } catch (_) {
+      if (mounted) {
+        setState(() => was ? _mine.add(type) : _mine.remove(type));
+      }
+    }
   }
 
   @override
@@ -163,7 +245,12 @@ class _StoryPlayerState extends State<StoryPlayer>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          _StoryContent(item: item),
+          _StoryContent(
+            key: ValueKey('${_person}_$_item'),
+            item: item,
+            paused: _paused,
+            onVideoLength: _setVideoLength,
+          ),
 
           // Tap zones: left = previous, right = next, hold = pause.
           Row(
@@ -268,6 +355,7 @@ class _StoryPlayerState extends State<StoryPlayer>
                         child: Avatar(
                           name: _story.name,
                           color: _story.color,
+                          photoUrl: _story.avatarUrl,
                           size: 44,
                         ),
                       ),
@@ -287,7 +375,9 @@ class _StoryPlayerState extends State<StoryPlayer>
                               ),
                             ),
                             Text(
-                              _story.time,
+                              item.createdAt != null
+                                  ? _ago(item.createdAt!)
+                                  : _story.time,
                               style: const TextStyle(
                                 color: Colors.white70,
                                 fontSize: 13,
@@ -301,19 +391,40 @@ class _StoryPlayerState extends State<StoryPlayer>
                         icon: const Icon(Icons.more_horiz, color: Colors.white),
                         onOpened: () => _setPaused(true),
                         onCanceled: () => _setPaused(false),
-                        onSelected: (v) {
+                        onSelected: (v) async {
+                          if (v == 'Delete') {
+                            final del = widget.hooks.onDelete;
+                            if (del != null) {
+                              try {
+                                await del(_current);
+                                _toast('Story deleted');
+                                widget.onClose();
+                              } catch (_) {
+                                _toast('Could not delete. Try again.');
+                              }
+                            }
+                            return;
+                          }
                           _setPaused(false);
-                          _toast('$v is coming soon.');
+                          _toast('$v is available on the mobile app.');
                         },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: 'Get notification',
-                            child: Text('Get notification'),
-                          ),
-                          PopupMenuItem(value: 'Repost', child: Text('Repost')),
-                          PopupMenuItem(value: 'Save', child: Text('Save')),
-                          PopupMenuItem(value: 'Hide', child: Text('Hide')),
-                        ],
+                        itemBuilder: (_) => widget.isMine
+                            ? const [
+                                PopupMenuItem(
+                                  value: 'Delete',
+                                  child: Text('Delete story'),
+                                ),
+                              ]
+                            : const [
+                                PopupMenuItem(
+                                  value: 'Get notification',
+                                  child: Text('Get notification'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'Repost',
+                                  child: Text('Repost'),
+                                ),
+                              ],
                       ),
                       IconButton(
                         tooltip: 'Close',
@@ -344,59 +455,77 @@ class _StoryPlayerState extends State<StoryPlayer>
               child: Row(
                 children: [
                   Expanded(
-                    child: SizedBox(
-                      height: 44,
-                      child: TextField(
-                        controller: _reply,
-                        focusNode: _replyFocus,
-                        onSubmitted: (_) => _sendReply(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: 'Share your thoughts...',
-                          hintStyle: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                          ),
-                          filled: true,
-                          fillColor: Colors.white.withValues(alpha: 0.12),
-                          contentPadding: const EdgeInsets.only(left: 16),
-                          suffixIcon: IconButton(
-                            tooltip: 'Send',
-                            onPressed: _sendReply,
-                            icon: const Icon(
-                              Icons.send_outlined,
-                              color: Colors.white,
-                              size: 20,
+                    child: !item.commentsEnabled
+                        ? const Text(
+                            'Replies are turned off',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          )
+                        : SizedBox(
+                            height: 44,
+                            child: TextField(
+                              controller: _reply,
+                              focusNode: _replyFocus,
+                              onSubmitted: (_) => _sendReply(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Share your thoughts...',
+                                hintStyle: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white.withValues(alpha: 0.12),
+                                contentPadding: const EdgeInsets.only(left: 16),
+                                suffixIcon: IconButton(
+                                  tooltip: 'Send',
+                                  onPressed: _sendReply,
+                                  icon: const Icon(
+                                    Icons.send_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(24),
+                                  borderSide: const BorderSide(
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(24),
+                                  borderSide: const BorderSide(
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            borderSide: const BorderSide(color: Colors.white70),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            borderSide: const BorderSide(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
                   ),
                   const SizedBox(width: 6),
-                  for (final e in const ['😂', '❤️', '🤙'])
+                  for (final (type, e) in const [
+                    ('favorite', '❤️'),
+                    ('peace', '✌️'),
+                    ('thumbs', '👍'),
+                  ])
                     Padding(
                       padding: const EdgeInsets.only(left: 4),
                       child: InkWell(
                         customBorder: const CircleBorder(),
-                        onTap: () => _sendReply(e),
+                        onTap: () => _react(type),
                         child: Container(
                           width: 40,
                           height: 40,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.25),
+                            color: _mine.contains(type)
+                                ? Colors.white.withValues(alpha: 0.7)
+                                : Colors.white.withValues(alpha: 0.25),
                             shape: BoxShape.circle,
                           ),
                           child: Text(e, style: const TextStyle(fontSize: 21)),
@@ -413,14 +542,22 @@ class _StoryPlayerState extends State<StoryPlayer>
               bottom: 16,
               child: Center(
                 child: TextButton.icon(
-                  onPressed: () => _toast('Story viewers are coming soon.'),
+                  onPressed: () {
+                    final v = widget.hooks.onViewers;
+                    if (v == null) {
+                      _toast('Viewers show once you are signed in.');
+                      return;
+                    }
+                    _setPaused(true);
+                    v(_current);
+                  },
                   icon: const Icon(
                     Icons.remove_red_eye_outlined,
                     color: Colors.white,
                   ),
-                  label: const Text(
-                    'Viewers',
-                    style: TextStyle(color: Colors.white),
+                  label: Text(
+                    item.id.isEmpty ? 'Viewers' : 'Viewers (${item.viewCount})',
+                    style: const TextStyle(color: Colors.white),
                   ),
                 ),
               ),
@@ -464,43 +601,127 @@ class _ArrowButton extends StatelessWidget {
   }
 }
 
+String _ago(DateTime d) {
+  final diff = DateTime.now().difference(d);
+  if (diff.inMinutes < 1) return 'Just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  return 'Yesterday';
+}
+
+/// Phone's 10 text-story fonts, by text_font_index.
+TextStyle storyFont(int index, {double size = 30, Color? color}) {
+  final c = color ?? const Color(0xFF2D2D2D);
+  return switch (index) {
+    1 => GoogleFonts.openSans(
+      fontSize: size,
+      color: c,
+      fontWeight: FontWeight.bold,
+    ),
+    2 => GoogleFonts.lato(
+      fontSize: size,
+      color: c,
+      fontWeight: FontWeight.bold,
+    ),
+    3 => GoogleFonts.montserrat(
+      fontSize: size,
+      color: c,
+      fontWeight: FontWeight.bold,
+    ),
+    4 => GoogleFonts.poppins(
+      fontSize: size,
+      color: c,
+      fontWeight: FontWeight.w300,
+    ),
+    5 => GoogleFonts.dancingScript(
+      fontSize: size,
+      color: c,
+      fontWeight: FontWeight.bold,
+    ),
+    6 => GoogleFonts.greatVibes(fontSize: size, color: c),
+    7 => GoogleFonts.pacifico(fontSize: size, color: c),
+    8 => GoogleFonts.sacramento(fontSize: size, color: c),
+    9 => GoogleFonts.satisfy(fontSize: size, color: c),
+    _ => GoogleFonts.roboto(
+      fontSize: size,
+      color: c,
+      fontWeight: FontWeight.bold,
+    ),
+  };
+}
+
 class _StoryContent extends StatelessWidget {
-  const _StoryContent({required this.item});
+  const _StoryContent({
+    super.key,
+    required this.item,
+    required this.paused,
+    required this.onVideoLength,
+  });
 
   final StoryItem item;
+  final bool paused;
+  final ValueChanged<Duration> onVideoLength;
 
   @override
   Widget build(BuildContext context) {
     if (item.kind == StoryKind.text) {
+      final g = item.gradient;
       return Container(
-        padding: const EdgeInsets.all(56),
+        padding: const EdgeInsets.all(48),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              item.background,
-              Color.lerp(item.background, Colors.white, 0.45)!,
-            ],
+            colors:
+                g ??
+                [
+                  item.background,
+                  Color.lerp(item.background, Colors.white, 0.45)!,
+                ],
           ),
         ),
         child: Text(
           item.text,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 34,
-            fontWeight: FontWeight.w700,
-            height: 1.3,
-          ),
+          style: g != null
+              ? storyFont(item.fontIndex, size: 30)
+              : const TextStyle(
+                  color: Colors.white,
+                  fontSize: 34,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                ),
         ),
       );
     }
+    final url = item.mediaUrl;
     return Stack(
       fit: StackFit.expand,
       children: [
-        CustomPaint(painter: SunsetPainter()),
+        if (url == null || url.isEmpty)
+          CustomPaint(painter: SunsetPainter())
+        else if (item.isVideo)
+          _StoryVideo(url: url, paused: paused, onLength: onVideoLength)
+        else ...[
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+            child: Image.network(url, fit: BoxFit.cover),
+          ),
+          Container(color: Colors.black26),
+          Image.network(
+            url,
+            fit: BoxFit.contain,
+            loadingBuilder: (_, child, p) => p == null
+                ? child
+                : const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+            errorBuilder: (_, _, _) => const Center(
+              child: Icon(Icons.broken_image_outlined, color: Colors.white54),
+            ),
+          ),
+        ],
         if (item.caption.isNotEmpty)
           Positioned(
             left: 20,
@@ -518,6 +739,69 @@ class _StoryContent extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _StoryVideo extends StatefulWidget {
+  const _StoryVideo({
+    required this.url,
+    required this.paused,
+    required this.onLength,
+  });
+
+  final String url;
+  final bool paused;
+  final ValueChanged<Duration> onLength;
+
+  @override
+  State<_StoryVideo> createState() => _StoryVideoState();
+}
+
+class _StoryVideoState extends State<_StoryVideo> {
+  late final VideoPlayerController _c = VideoPlayerController.networkUrl(
+    Uri.parse(widget.url),
+  );
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _c
+        .initialize()
+        .then((_) {
+          if (!mounted) return;
+          setState(() => _ready = true);
+          widget.onLength(_c.value.duration);
+          if (!widget.paused) _c.play();
+        })
+        .catchError((Object _) {});
+  }
+
+  @override
+  void didUpdateWidget(covariant _StoryVideo old) {
+    super.didUpdateWidget(old);
+    if (!_ready) return;
+    widget.paused ? _c.pause() : _c.play();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      alignment: Alignment.center,
+      child: _ready
+          ? AspectRatio(
+              aspectRatio: _c.value.aspectRatio,
+              child: VideoPlayer(_c),
+            )
+          : const CircularProgressIndicator(color: Colors.white),
     );
   }
 }

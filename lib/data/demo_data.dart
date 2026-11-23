@@ -430,6 +430,11 @@ class DemoTransaction {
     required this.amount,
     required this.kind,
     this.counterparty = 'Mr Kesta Wealth',
+    this.incoming = true,
+    this.subtitle = '',
+    this.avatarUrl,
+    this.icon,
+    this.details = const [],
   });
 
   final String id;
@@ -439,6 +444,15 @@ class DemoTransaction {
   final String amount;
   final TxKind kind;
   final String counterparty;
+
+  // Live wallet only.
+  final bool incoming;
+  final String subtitle;
+  final String? avatarUrl;
+  final IconData? icon;
+
+  /// Extra rows for the details popup (label, value).
+  final List<(String, String)> details;
 }
 
 const demoTransactions = <DemoTransaction>[
@@ -626,16 +640,62 @@ class StoryItem {
   const StoryItem.photo({this.caption = ''})
     : kind = StoryKind.photo,
       text = '',
-      background = const Color(0xFF000000);
+      background = const Color(0xFF000000),
+      id = '',
+      mediaUrl = null,
+      isVideo = false,
+      createdAt = null,
+      viewCount = 0,
+      commentsEnabled = true,
+      fontIndex = 0,
+      gradient = null;
 
   const StoryItem.text(this.text, this.background)
     : kind = StoryKind.text,
-      caption = '';
+      caption = '',
+      id = '',
+      mediaUrl = null,
+      isVideo = false,
+      createdAt = null,
+      viewCount = 0,
+      commentsEnabled = true,
+      fontIndex = 0,
+      gradient = null;
+
+  /// A story from the statuses table (same row as the phone).
+  const StoryItem.live({
+    required this.id,
+    required this.kind,
+    this.text = '',
+    this.caption = '',
+    this.mediaUrl,
+    this.isVideo = false,
+    this.createdAt,
+    this.viewCount = 0,
+    this.commentsEnabled = true,
+    this.fontIndex = 0,
+    this.gradient,
+    this.background = const Color(0xFF7A2BE8),
+  });
 
   final StoryKind kind;
   final String text;
   final String caption;
   final Color background;
+
+  // Live stories.
+  final String id;
+  final String? mediaUrl;
+  final bool isVideo;
+  final DateTime? createdAt;
+  final int viewCount;
+  final bool commentsEnabled;
+
+  /// Font of a text story (phone's 10 story fonts).
+  final int fontIndex;
+
+  /// Two-colour background of a text story ("#a1c4fd,#c2e9fb").
+  final List<Color>? gradient;
 }
 
 class DemoStory {
@@ -645,6 +705,8 @@ class DemoStory {
     required this.items,
     this.color,
     this.viewed = false,
+    this.userId,
+    this.avatarUrl,
   });
 
   final String name;
@@ -652,6 +714,10 @@ class DemoStory {
   final List<StoryItem> items;
   final Color? color;
   final bool viewed;
+
+  // Live stories.
+  final String? userId;
+  final String? avatarUrl;
 }
 
 const demoStories = <DemoStory>[
@@ -690,6 +756,9 @@ class FeedMedia {
   const FeedMedia.image(this.url) : isVideo = false, thumb = url;
   const FeedMedia.video(this.url, {required this.thumb}) : isVideo = true;
 
+  /// Network URLs start with http; anything else is a bundled asset.
+  bool get isNetwork => url.startsWith('http');
+
   /// Asset path for the demo; a storage URL in the backend phase.
   final String url;
   final bool isVideo;
@@ -699,16 +768,35 @@ class FeedMedia {
 }
 
 class DemoPost {
-  const DemoPost.media(this.author, this.media)
-    : text = null,
-      background = const Color(0xFF000000);
-  const DemoPost.text(this.author, this.text, this.background)
-    : media = const [];
+  const DemoPost.media(
+    this.author,
+    this.media, {
+    this.statusIds = const [],
+    this.caption = '',
+  }) : text = null,
+       background = const Color(0xFF000000),
+       gradient = null,
+       fontIndex = 0;
+  const DemoPost.text(
+    this.author,
+    this.text,
+    this.background, {
+    this.statusIds = const [],
+    this.gradient,
+    this.fontIndex = 0,
+  }) : media = const [],
+       caption = '';
 
   final DemoStory author;
   final List<FeedMedia> media;
   final String? text;
   final Color background;
+
+  /// Live: the statuses rows behind this post (reactions use the first).
+  final List<String> statusIds;
+  final String caption;
+  final List<Color>? gradient;
+  final int fontIndex;
 }
 
 final demoPosts = <DemoPost>[

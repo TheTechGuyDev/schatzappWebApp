@@ -1,6 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
+import '../../data/live/chat_repo.dart';
+import '../../data/live/wallet_repo.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
@@ -43,6 +46,28 @@ const _moreActions = [
 class _WalletPageState extends State<WalletPage> {
   bool _hidden = false;
 
+  bool get _live => WebAuth.instance.isLive;
+  WalletRepo get _repo => WalletRepo.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_live) {
+      _repo.addListener(_changed);
+      _repo.start();
+    }
+  }
+
+  @override
+  void dispose() {
+    _repo.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
   void _onAction(_WalletAction a) {
     showDialog<void>(
       context: context,
@@ -61,11 +86,32 @@ class _WalletPageState extends State<WalletPage> {
   Widget build(BuildContext context) {
     final size = screenSizeOf(context);
     final actions = _ActionsPanel(onTap: _onAction);
-    final main = _WalletMain(
-      hidden: _hidden,
-      onToggleHidden: () => setState(() => _hidden = !_hidden),
-      onOpenTx: _openTx,
-    );
+    final me = ChatRepo.instance.me;
+    final main = _live
+        ? _WalletMain(
+            hidden: _hidden,
+            onToggleHidden: () => setState(() => _hidden = !_hidden),
+            onOpenTx: _openTx,
+            txs: _repo.transactions,
+            balanceText: 'SFZ ${WalletRepo.money(_repo.schatzBalance)}',
+            localText: _repo.localEquivalent == null || _repo.currency.isEmpty
+                ? ''
+                : '= ${_repo.currency} ${WalletRepo.money(_repo.localEquivalent!)}',
+            name: '${me?['full_name'] ?? 'You'}',
+            photoUrl: me?['avatar_url'] as String?,
+            loading: _repo.loading,
+            message:
+                _repo.error ??
+                (!_repo.loading && !_repo.hasWallet
+                    ? 'Set up your wallet in the SchatzApp mobile app to see '
+                          'your balance here.'
+                    : null),
+          )
+        : _WalletMain(
+            hidden: _hidden,
+            onToggleHidden: () => setState(() => _hidden = !_hidden),
+            onOpenTx: _openTx,
+          );
 
     if (size == ScreenSize.phone) {
       return Container(
@@ -241,11 +287,27 @@ class _WalletMain extends StatelessWidget {
     required this.hidden,
     required this.onToggleHidden,
     required this.onOpenTx,
+    this.txs = demoTransactions,
+    this.balanceText = demoWalletBalance,
+    this.localText = demoWalletLocal,
+    this.name = demoCurrentUserName,
+    this.photoUrl,
+    this.loading = false,
+    this.message,
   });
 
   final bool hidden;
   final VoidCallback onToggleHidden;
   final ValueChanged<DemoTransaction> onOpenTx;
+  final List<DemoTransaction> txs;
+  final String balanceText;
+  final String localText;
+  final String name;
+  final String? photoUrl;
+  final bool loading;
+
+  /// Shown instead of the transactions (no wallet yet, or an error).
+  final String? message;
 
   Widget header(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(24, 18, 20, 6),
@@ -283,7 +345,7 @@ class _WalletMain extends StatelessWidget {
               color: Colors.white,
               shape: BoxShape.circle,
             ),
-            child: const Avatar(name: demoCurrentUserName, size: 42),
+            child: Avatar(name: name, photoUrl: photoUrl, size: 42),
           ),
         ),
       ],
@@ -292,7 +354,7 @@ class _WalletMain extends StatelessWidget {
 
   Widget balance() => Padding(
     padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-    child: _BalanceCard(hidden: hidden),
+    child: _BalanceCard(hidden: hidden, balance: balanceText, local: localText),
   );
 
   Widget transactions() => Padding(
@@ -309,13 +371,30 @@ class _WalletMain extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        for (var i = 0; i < demoTransactions.length; i++)
-          _TxRow(
-            tx: demoTransactions[i],
-            hidden: hidden,
-            last: i == demoTransactions.length - 1,
-            onTap: () => onOpenTx(demoTransactions[i]),
-          ),
+        if (loading)
+          const Padding(
+            padding: EdgeInsets.all(30),
+            child: Center(
+              child: CircularProgressIndicator(color: AppColors.accent),
+            ),
+          )
+        else if (message != null || txs.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 30),
+            child: Text(
+              message ?? 'No transactions yet',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.meta, fontSize: 15),
+            ),
+          )
+        else
+          for (var i = 0; i < txs.length; i++)
+            _TxRow(
+              tx: txs[i],
+              hidden: hidden,
+              last: i == txs.length - 1,
+              onTap: () => onOpenTx(txs[i]),
+            ),
       ],
     ),
   );
@@ -327,9 +406,15 @@ class _WalletMain extends StatelessWidget {
 }
 
 class _BalanceCard extends StatelessWidget {
-  const _BalanceCard({required this.hidden});
+  const _BalanceCard({
+    required this.hidden,
+    required this.balance,
+    required this.local,
+  });
 
   final bool hidden;
+  final String balance;
+  final String local;
 
   @override
   Widget build(BuildContext context) {
@@ -377,7 +462,7 @@ class _BalanceCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      hidden ? 'SFZ ••••••' : demoWalletBalance,
+                      hidden ? 'SFZ ••••••' : balance,
                       style: const TextStyle(
                         fontSize: 36,
                         fontWeight: FontWeight.w700,
@@ -387,7 +472,7 @@ class _BalanceCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      hidden ? '= NGN ••••••' : demoWalletLocal,
+                      hidden ? (local.isEmpty ? '' : '= ••••••') : local,
                       style: TextStyle(
                         fontSize: 16,
                         color: Colors.white.withValues(alpha: 0.9),
@@ -521,7 +606,7 @@ class _TxRow extends StatelessWidget {
                 shape: BoxShape.circle,
                 color: Color(0xFFEDE4FB),
               ),
-              child: tx.kind == TxKind.giftcard
+              child: tx.icon != null || tx.kind == TxKind.giftcard
                   ? Container(
                       width: 48,
                       height: 48,
@@ -529,15 +614,20 @@ class _TxRow extends StatelessWidget {
                         color: Colors.white,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.redeem,
+                      child: Icon(
+                        tx.icon ?? Icons.redeem,
                         color: AppColors.accent,
                         size: 24,
                       ),
                     )
                   : Avatar(
-                      name: tx.counterparty,
-                      color: const Color(0xFF8A6A55),
+                      name: tx.counterparty.isEmpty
+                          ? 'SchatzApp'
+                          : tx.counterparty,
+                      photoUrl: tx.avatarUrl,
+                      color: tx.avatarUrl == null
+                          ? const Color(0xFF8A6A55)
+                          : null,
                       size: 48,
                     ),
             ),
@@ -564,7 +654,9 @@ class _TxRow extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            tx.status,
+                            tx.subtitle.isNotEmpty ? tx.subtitle : tx.status,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 14,
                               color: AppColors.meta,
@@ -578,10 +670,12 @@ class _TxRow extends StatelessWidget {
                       children: [
                         Text(
                           hidden ? '••••' : tx.amount,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFF17A82E),
+                            color: tx.incoming
+                                ? const Color(0xFF17A82E)
+                                : AppColors.heading,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -733,16 +827,20 @@ class _TransactionDialog extends StatelessWidget {
               const SizedBox(height: 14),
               Text(
                 tx.amount,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF17A82E),
+                  color: tx.incoming
+                      ? const Color(0xFF17A82E)
+                      : AppColors.heading,
                 ),
               ),
               const SizedBox(height: 14),
               row('Type', tx.title),
               row('Status', tx.status),
-              if (tx.kind == TxKind.transfer) row('From', tx.counterparty),
+              if (tx.details.isEmpty && tx.kind == TxKind.transfer)
+                row('From', tx.counterparty),
+              for (final (k, v) in tx.details) row(k, v),
               row('Date', tx.date),
               const SizedBox(height: 8),
               TextButton(

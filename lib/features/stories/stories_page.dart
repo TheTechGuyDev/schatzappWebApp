@@ -1,6 +1,12 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../auth/web_auth.dart';
 import '../../data/demo_data.dart';
+import '../../data/live/chat_repo.dart';
+import '../../data/live/stories_repo.dart';
+import '../../platform/camera_dialog.dart';
+import '../../platform/web_files.dart';
+import '../chats/chat_dialogs.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
@@ -26,7 +32,18 @@ class _StoriesPageState extends State<StoriesPage> {
   _Tab _tab = _Tab.simplified;
   String _q = '';
   final List<StoryItem> _myItems = [];
-  late List<DemoPost> _feed = _shuffleFeed();
+  late List<DemoPost> _feed = _live ? const [] : _shuffleFeed();
+
+  bool get _live => WebAuth.instance.isLive;
+  StoriesRepo get _repo => StoriesRepo.instance;
+
+  // Live data
+  List<DemoStory> _friends = const [];
+  DemoStory? _mine;
+  bool _loading = true;
+  bool _feedLoading = false;
+
+  List<DemoStory> get _stories => _live ? _friends : demoStories;
 
   /// Story playing in the right-hand panel (Simplified, desktop).
   List<DemoStory>? _playList;
@@ -38,9 +55,120 @@ class _StoriesPageState extends State<StoriesPage> {
       ? null
       : (_playMine ? 'My Stories' : _playList![_playIndex].name);
 
+  @override
+  void initState() {
+    super.initState();
+    if (_live) _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await Future.wait([_repo.friends(), _repo.mine()]);
+      if (!mounted) return;
+      setState(() {
+        _friends = r[0] as List<DemoStory>;
+        _mine = r[1] as DemoStory;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast('Could not load stories. Check your connection.');
+    }
+  }
+
+  Future<void> _loadFeed() async {
+    setState(() => _feedLoading = true);
+    try {
+      final f = await _repo.forYou();
+      if (mounted) setState(() => _feed = f);
+    } catch (_) {
+      _toast('Could not load For You. Check your connection.');
+    } finally {
+      if (mounted) setState(() => _feedLoading = false);
+    }
+  }
+
+  void _toast(String t) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(t)));
+  }
+
+  StoryHooks get _hooks => !_live
+      ? const StoryHooks()
+      : StoryHooks(
+          onViewed: (s, item) => _repo.markViewed(item.id),
+          onReply: (s, item, text) => _repo.reply(s.userId!, item, text),
+          onReact: (item, type) => _repo.toggleReaction(item.id, type),
+          reactions: (item) async => (await _repo.reactions(item.id)).mine,
+          onViewers: _showViewers,
+          onDelete: (item) async {
+            await _repo.delete(item.id);
+            _stop();
+            await _load();
+          },
+        );
+
+  Future<void> _showViewers(StoryItem item) async {
+    final list = await _repo
+        .viewers(item.id)
+        .catchError((Object _) => <StoryViewer>[]);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => DialogShell(
+        title: 'Viewed by ${list.length}',
+        width: 400,
+        child: list.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.fromLTRB(24, 6, 24, 30),
+                child: Text(
+                  'No one has viewed this story yet.',
+                  style: TextStyle(color: AppColors.meta),
+                ),
+              )
+            : ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                children: [
+                  for (final v in list)
+                    ListTile(
+                      leading: Avatar(
+                        name: v.name,
+                        photoUrl: v.avatarUrl,
+                        size: 42,
+                      ),
+                      title: Text(
+                        v.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.heading,
+                        ),
+                      ),
+                      subtitle: Text(
+                        StoriesRepo.timeAgo(v.at),
+                        style: const TextStyle(color: AppColors.meta),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+    );
+  }
+
   void _play(List<DemoStory> list, int index, {bool mine = false}) {
     if (screenSizeOf(context) != ScreenSize.desktop) {
-      showStoryViewer(context, stories: list, startIndex: index, isMine: mine);
+      showStoryViewer(
+        context,
+        stories: list,
+        startIndex: index,
+        isMine: mine,
+        hooks: _hooks,
+      ).then((_) {
+        if (_live) _load();
+      });
       return;
     }
     setState(() {
@@ -51,24 +179,34 @@ class _StoriesPageState extends State<StoriesPage> {
     });
   }
 
-  void _stop() => setState(() => _playList = null);
+  void _stop() {
+    setState(() => _playList = null);
+    if (_live) _load();
+  }
 
   /// For You: posts shuffled each time the tab opens.
   List<DemoPost> _shuffleFeed() => List.of(demoPosts)..shuffle();
 
-  DemoStory get _myStory =>
-      DemoStory(name: demoCurrentUserName, time: 'Just now', items: _myItems);
+  DemoStory get _myStory => _live && _mine != null
+      ? _mine!
+      : DemoStory(name: demoCurrentUserName, time: 'Just now', items: _myItems);
+
+  List<StoryItem> get _myStoryItems =>
+      _live ? (_mine?.items ?? const []) : _myItems;
 
   Future<void> _addStory() async {
-    final item = await showDialog<StoryItem>(
+    final item = await showDialog<Object>(
       context: context,
-      builder: (_) => const _AddStoryDialog(),
+      builder: (_) => _AddStoryDialog(live: _live),
     );
     if (item == null || !mounted) return;
-    setState(() => _myItems.add(item));
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('Story posted')));
+    if (_live) {
+      await _load();
+      _toast('Story posted');
+      return;
+    }
+    if (item is StoryItem) setState(() => _myItems.add(item));
+    _toast('Story posted');
   }
 
   @override
@@ -76,25 +214,38 @@ class _StoriesPageState extends State<StoriesPage> {
     final size = screenSizeOf(context);
     final menu = _StoriesMenu(
       selected: _tab,
-      onSelect: (t) => setState(() {
-        _tab = t;
-        _playList = null;
-        if (t == _Tab.forYou) _feed = _shuffleFeed();
-      }),
+      onSelect: (t) {
+        setState(() {
+          _tab = t;
+          _playList = null;
+          if (t == _Tab.forYou && !_live) _feed = _shuffleFeed();
+        });
+        if (t == _Tab.forYou && _live) _loadFeed();
+      },
     );
     final Widget body = switch (_tab) {
       _Tab.simplified => _Simplified(
         query: _q,
-        myItems: _myItems,
+        stories: _stories,
+        loading: _live && _loading,
+        myItems: _myStoryItems,
+        myName: _live
+            ? '${ChatRepo.instance.me?['full_name'] ?? 'Me'}'
+            : demoCurrentUserName,
+        myPhoto: _live
+            ? (ChatRepo.instance.me?['avatar_url'] as String?)
+            : null,
+        myTime: _live ? (_mine?.time ?? '') : 'Just now',
         onSearch: (v) => setState(() => _q = v.trim().toLowerCase()),
         activeName: _activeName,
-        onOpen: (s) => _play(demoStories, demoStories.indexOf(s)),
-        onMyStory: () =>
-            _myItems.isEmpty ? _addStory() : _play([_myStory], 0, mine: true),
+        onOpen: (s) => _play(_stories, _stories.indexOf(s)),
+        onMyStory: () => _myStoryItems.isEmpty
+            ? _addStory()
+            : _play([_myStory], 0, mine: true),
         onAddStory: _addStory,
       ),
-      _Tab.forYou => _ForYou(feed: _feed),
-      _Tab.privacy => const _StoryPrivacy(),
+      _Tab.forYou => _ForYou(feed: _feed, loading: _feedLoading, live: _live),
+      _Tab.privacy => _StoryPrivacy(live: _live),
     };
 
     if (size == ScreenSize.phone) {
@@ -144,6 +295,7 @@ class _StoriesPageState extends State<StoriesPage> {
                     stories: _playList!,
                     startIndex: _playIndex,
                     isMine: _playMine,
+                    hooks: _hooks,
                     onClose: _stop,
                     onPersonChanged: (i) => setState(() => _playIndex = i),
                   ),
@@ -258,6 +410,11 @@ class _StoriesMenu extends StatelessWidget {
 class _Simplified extends StatelessWidget {
   const _Simplified({
     required this.query,
+    required this.stories,
+    required this.myName,
+    required this.myTime,
+    this.myPhoto,
+    this.loading = false,
     required this.myItems,
     required this.activeName,
     required this.onSearch,
@@ -267,6 +424,11 @@ class _Simplified extends StatelessWidget {
   });
 
   final String query;
+  final List<DemoStory> stories;
+  final String myName;
+  final String? myPhoto;
+  final String myTime;
+  final bool loading;
   final List<StoryItem> myItems;
   final String? activeName;
   final ValueChanged<DemoStory> onOpen;
@@ -276,7 +438,7 @@ class _Simplified extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final list = demoStories
+    final list = stories
         .where((s) => query.isEmpty || s.name.toLowerCase().contains(query))
         .toList();
     final recent = list.where((s) => !s.viewed).toList();
@@ -319,10 +481,10 @@ class _Simplified extends StatelessWidget {
           name: 'My Stories',
           subtitle: myItems.isEmpty
               ? 'Tap to add a story'
-              : '${myItems.length} ${myItems.length == 1 ? 'story' : 'stories'} · Just now',
+              : '${myItems.length} ${myItems.length == 1 ? 'story' : 'stories'}${myTime.isEmpty ? '' : ' · $myTime'}',
           ring: myItems.isNotEmpty,
           active: activeName == 'My Stories',
-          avatar: const Avatar(name: demoCurrentUserName, size: 72),
+          avatar: Avatar(name: myName, photoUrl: myPhoto, size: 72),
           badge: true,
           onTap: onMyStory,
           onBadge: onAddStory,
@@ -336,7 +498,12 @@ class _Simplified extends StatelessWidget {
               subtitle: s.time,
               ring: true,
               active: activeName == s.name,
-              avatar: Avatar(name: s.name, color: s.color, size: 72),
+              avatar: Avatar(
+                name: s.name,
+                color: s.color,
+                photoUrl: s.avatarUrl,
+                size: 72,
+              ),
               chevron: true,
               onTap: () => open(s),
             ),
@@ -350,12 +517,24 @@ class _Simplified extends StatelessWidget {
               subtitle: s.time,
               ring: false,
               active: activeName == s.name,
-              avatar: Avatar(name: s.name, color: s.color, size: 72),
+              avatar: Avatar(
+                name: s.name,
+                color: s.color,
+                photoUrl: s.avatarUrl,
+                size: 72,
+              ),
               chevron: true,
               onTap: () => open(s),
             ),
         ],
-        if (list.isEmpty)
+        if (loading)
+          const Padding(
+            padding: EdgeInsets.all(30),
+            child: Center(
+              child: CircularProgressIndicator(color: AppColors.accent),
+            ),
+          )
+        else if (list.isEmpty)
           const Padding(
             padding: EdgeInsets.all(30),
             child: Center(
@@ -514,9 +693,11 @@ class _StoryRow extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _ForYou extends StatefulWidget {
-  const _ForYou({required this.feed});
+  const _ForYou({required this.feed, this.loading = false, this.live = false});
 
   final List<DemoPost> feed;
+  final bool loading;
+  final bool live;
 
   @override
   State<_ForYou> createState() => _ForYouState();
@@ -576,7 +757,14 @@ class _ForYouState extends State<_ForYou> {
           ),
         ),
         const SizedBox(height: 16),
-        if (items.isEmpty)
+        if (widget.loading)
+          const Padding(
+            padding: EdgeInsets.all(40),
+            child: Center(
+              child: CircularProgressIndicator(color: AppColors.accent),
+            ),
+          )
+        else if (items.isEmpty)
           const Padding(
             padding: EdgeInsets.all(40),
             child: Center(
@@ -590,9 +778,14 @@ class _ForYouState extends State<_ForYou> {
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: _FeedPost(
-              key: ValueKey('post-${demoPosts.indexOf(widget.feed[i])}'),
+              key: ValueKey(
+                widget.live
+                    ? 'post-${widget.feed[i].statusIds.join()}'
+                    : 'post-${demoPosts.indexOf(widget.feed[i])}',
+              ),
               post: widget.feed[i],
               seed: i,
+              live: widget.live,
               onHide: () => setState(() => _hidden.add(i)),
             ),
           ),
@@ -608,35 +801,71 @@ class _FeedPost extends StatefulWidget {
     required this.post,
     required this.seed,
     required this.onHide,
+    this.live = false,
   });
 
   final DemoPost post;
   final int seed;
   final VoidCallback onHide;
+  final bool live;
 
   @override
   State<_FeedPost> createState() => _FeedPostState();
 }
 
 class _FeedPostState extends State<_FeedPost> {
-  // Reaction counts: heart, call-me hand, laughing (same set as mobile).
-  late final List<int> _counts = [
-    (widget.seed * 3 + 1) % 5,
-    (widget.seed * 2) % 3,
-    widget.seed % 2,
-  ];
-  int? _mine;
+  // Same three reactions as the phone: favorite, peace, thumbs.
+  static const _types = StoriesRepo.reactionTypes;
+  late final List<int> _counts = widget.live
+      ? [0, 0, 0]
+      : [(widget.seed * 3 + 1) % 5, (widget.seed * 2) % 3, widget.seed % 2];
+  final Set<int> _mineSet = {};
 
-  void _react(int r) => setState(() {
-    if (_mine == r) {
-      _counts[r]--;
-      _mine = null;
-    } else {
-      if (_mine != null) _counts[_mine!]--;
-      _counts[r]++;
-      _mine = r;
+  String? get _statusId =>
+      widget.post.statusIds.isEmpty ? null : widget.post.statusIds.first;
+
+  @override
+  void initState() {
+    super.initState();
+    final id = _statusId;
+    if (widget.live && id != null) {
+      StoriesRepo.instance
+          .reactions(id)
+          .then((r) {
+            if (!mounted) return;
+            setState(() {
+              for (var i = 0; i < _types.length; i++) {
+                _counts[i] = r.counts[_types[i]] ?? 0;
+                if (r.mine.contains(_types[i])) _mineSet.add(i);
+              }
+            });
+          })
+          .catchError((Object _) {});
+      // Seeing a post counts as viewing that story, like the phone.
+      for (final s in widget.post.statusIds) {
+        StoriesRepo.instance.markViewed(s);
+      }
     }
-  });
+  }
+
+  Future<void> _react(int r) async {
+    final was = _mineSet.contains(r);
+    setState(() {
+      was ? _mineSet.remove(r) : _mineSet.add(r);
+      _counts[r] += was ? -1 : 1;
+    });
+    final id = _statusId;
+    if (!widget.live || id == null) return;
+    try {
+      await StoriesRepo.instance.toggleReaction(id, _types[r]);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        was ? _mineSet.add(r) : _mineSet.remove(r);
+        _counts[r] += was ? 1 : -1;
+      });
+    }
+  }
 
   void _toast(String msg) => ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
@@ -674,7 +903,12 @@ class _FeedPostState extends State<_FeedPost> {
                     shape: BoxShape.circle,
                     border: Border.all(color: AppColors.accent, width: 2),
                   ),
-                  child: Avatar(name: s.name, color: s.color, size: 54),
+                  child: Avatar(
+                    name: s.name,
+                    color: s.color,
+                    photoUrl: s.avatarUrl,
+                    size: 54,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -708,7 +942,7 @@ class _FeedPostState extends State<_FeedPost> {
                       widget.onHide();
                       _toast('Story hidden');
                     } else {
-                      _toast('$v is coming soon.');
+                      _toast('$v is available on the mobile app.');
                     }
                   },
                   itemBuilder: (_) => const [
@@ -739,25 +973,35 @@ class _FeedPostState extends State<_FeedPost> {
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: [
-                            post.background,
-                            Color.lerp(post.background, Colors.white, 0.45)!,
-                          ],
+                          colors:
+                              post.gradient ??
+                              [
+                                post.background,
+                                Color.lerp(
+                                  post.background,
+                                  Colors.white,
+                                  0.45,
+                                )!,
+                              ],
                         ),
                       ),
                       child: Text(
                         post.text!,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 34,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: post.gradient != null
+                            ? storyFont(post.fontIndex, size: 30)
+                            : const TextStyle(
+                                color: Colors.white,
+                                fontSize: 34,
+                                fontWeight: FontWeight.w700,
+                              ),
                       ),
                     ),
                   )
                 : PostMediaCarousel(
-                    postId: 'post-${demoPosts.indexOf(post)}',
+                    postId: widget.live
+                        ? 'post-${post.statusIds.join()}'
+                        : 'post-${demoPosts.indexOf(post)}',
                     media: post.media,
                   ),
           ),
@@ -769,25 +1013,27 @@ class _FeedPostState extends State<_FeedPost> {
               children: [
                 _ReactionButton(
                   icon: Icon(
-                    _mine == 0 ? Icons.favorite : Icons.favorite_border,
+                    _mineSet.contains(0)
+                        ? Icons.favorite
+                        : Icons.favorite_border,
                     color: const Color(0xFFE91E4D),
                     size: 28,
                   ),
                   count: _counts[0],
-                  active: _mine == 0,
+                  active: _mineSet.contains(0),
                   activeColor: const Color(0xFFE91E4D),
                   onTap: () => _react(0),
                 ),
                 _ReactionButton(
-                  icon: const Text('🤙', style: TextStyle(fontSize: 24)),
+                  icon: const Text('✌️', style: TextStyle(fontSize: 24)),
                   count: _counts[1],
-                  active: _mine == 1,
+                  active: _mineSet.contains(1),
                   onTap: () => _react(1),
                 ),
                 _ReactionButton(
-                  icon: const Text('😂', style: TextStyle(fontSize: 24)),
+                  icon: const Text('👍', style: TextStyle(fontSize: 24)),
                   count: _counts[2],
-                  active: _mine == 2,
+                  active: _mineSet.contains(2),
                   onTap: () => _react(2),
                 ),
                 const Spacer(),
@@ -796,7 +1042,9 @@ class _FeedPostState extends State<_FeedPost> {
                   borderRadius: BorderRadius.circular(24),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(24),
-                    onTap: () => _toast('Share is coming soon.'),
+                    onTap: () => _toast(
+                      'Sharing stories is available on the mobile app.',
+                    ),
                     child: const Padding(
                       padding: EdgeInsets.symmetric(
                         horizontal: 18,
@@ -887,7 +1135,9 @@ class _ReactionButton extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _StoryPrivacy extends StatefulWidget {
-  const _StoryPrivacy();
+  const _StoryPrivacy({this.live = false});
+
+  final bool live;
 
   @override
   State<_StoryPrivacy> createState() => _StoryPrivacyState();
@@ -900,9 +1150,104 @@ class _StoryPrivacyState extends State<_StoryPrivacy> {
   bool _download = true;
   bool _replies = true;
   bool _location = false;
+  bool _loading = false;
+  Set<String> _custom = {};
+
+  StoriesRepo get _repo => StoriesRepo.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.live) _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final s = await _repo.settings();
+      final c = await _repo.customViewers();
+      if (!mounted) return;
+      setState(() {
+        _hours = s.durationHours;
+        _random = s.sortOrder == 'random';
+        _who = s.viewVisibility == 'phone_number' ? 'phone' : s.viewVisibility;
+        _download = s.allowDownload;
+        _replies = s.allowReplies;
+        _location = s.showLocation;
+        _custom = c;
+      });
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Saves right away, like the phone.
+  Future<void> _save() async {
+    if (!widget.live) return;
+    try {
+      await _repo.saveSettings(
+        StorySettings(
+          durationHours: _hours,
+          sortOrder: _random ? 'random' : 'time',
+          viewVisibility: _who == 'phone' ? 'phone_number' : _who,
+          allowDownload: _download,
+          allowReplies: _replies,
+          showLocation: _location,
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save. Try again.')),
+        );
+      }
+    }
+  }
+
+  void _set(VoidCallback change) {
+    setState(change);
+    _save();
+  }
+
+  Future<void> _pickCustom() async {
+    if (!widget.live) {
+      setState(() => _who = 'custom');
+      return;
+    }
+    final contacts = await ChatRepo.instance.contacts();
+    if (!mounted) return;
+    final picked = await showDialog<List<DemoContact>>(
+      context: context,
+      builder: (_) => ContactPickerDialog(
+        title: 'Who can see my stories',
+        multiSelect: true,
+        actionLabel: 'Save',
+        load: () async => contacts,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final ids = {for (final c in picked) ?c.userId};
+    try {
+      await _repo.setCustomViewers(ids);
+      _custom = ids;
+      _set(() => _who = 'custom');
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save. Try again.')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.accent),
+      );
+    }
     return ListView(
       padding: const EdgeInsets.fromLTRB(28, 22, 28, 28),
       children: [
@@ -932,7 +1277,7 @@ class _StoryPrivacyState extends State<_StoryPrivacy> {
                   label: Text('$h Hours'),
                   selected: _hours == h,
                   selectedColor: AppColors.accentSoft,
-                  onSelected: (_) => setState(() => _hours = h),
+                  onSelected: (_) => _set(() => _hours = h),
                 ),
             ],
           ),
@@ -948,13 +1293,13 @@ class _StoryPrivacyState extends State<_StoryPrivacy> {
                 label: const Text('Default by Time'),
                 selected: !_random,
                 selectedColor: AppColors.accentSoft,
-                onSelected: (_) => setState(() => _random = false),
+                onSelected: (_) => _set(() => _random = false),
               ),
               ChoiceChip(
                 label: const Text('Default Randomly'),
                 selected: _random,
                 selectedColor: AppColors.accentSoft,
-                onSelected: (_) => setState(() => _random = true),
+                onSelected: (_) => _set(() => _random = true),
               ),
             ],
           ),
@@ -971,7 +1316,13 @@ class _StoryPrivacyState extends State<_StoryPrivacy> {
                 recommended: true,
               ),
               _radio('phone', 'Phone Number', 'People with my number.'),
-              _radio('custom', 'Custom', 'Choose specific people'),
+              _radio(
+                'custom',
+                'Custom',
+                _who == 'custom' && _custom.isNotEmpty
+                    ? '${_custom.length} people chosen. Tap to change.'
+                    : 'Choose specific people',
+              ),
             ],
           ),
         ),
@@ -983,19 +1334,19 @@ class _StoryPrivacyState extends State<_StoryPrivacy> {
                 'Allow Download',
                 'Let others save your stories.',
                 _download,
-                (v) => setState(() => _download = v),
+                (v) => _set(() => _download = v),
               ),
               _switch(
                 'Allow Replies',
                 'Let others reply to your stories.',
                 _replies,
-                (v) => setState(() => _replies = v),
+                (v) => _set(() => _replies = v),
               ),
               _switch(
                 'Show Location',
                 'Add location to your stories.',
                 _location,
-                (v) => setState(() => _location = v),
+                (v) => _set(() => _location = v),
               ),
             ],
           ),
@@ -1014,15 +1365,10 @@ class _StoryPrivacyState extends State<_StoryPrivacy> {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: () {
-        setState(() => _who = value);
         if (value == 'custom') {
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              const SnackBar(
-                content: Text('Choosing specific people is coming soon.'),
-              ),
-            );
+          _pickCustom();
+        } else {
+          _set(() => _who = value);
         }
       },
       child: Padding(
@@ -1172,38 +1518,118 @@ class _Section extends StatelessWidget {
 // Add to your story (mobile view_your_stories + create_a_story)
 // ---------------------------------------------------------------------------
 
+/// The phone's text-story backgrounds (two-colour gradients).
+const _storyGradients = [
+  [Color(0xFFA1C4FD), Color(0xFFC2E9FB)],
+  [Color(0xFFFBC2EB), Color(0xFFA6C1EE)],
+  [Color(0xFFFDCBF1), Color(0xFFE6DEE9)],
+  [Color(0xFFD4FC79), Color(0xFF96E6A1)],
+  [Color(0xFFFFECD2), Color(0xFFFCB69F)],
+  [Color(0xFF84FAB0), Color(0xFF8FD3F4)],
+  [Color(0xFFA18CD1), Color(0xFFFBC2EB)],
+  [Color(0xFFFFDEE9), Color(0xFFB5FFFC)],
+  [Color(0xFFF6D365), Color(0xFFFDA085)],
+  [Color(0xFFE0C3FC), Color(0xFF8EC5FC)],
+];
+
 class _AddStoryDialog extends StatefulWidget {
-  const _AddStoryDialog();
+  const _AddStoryDialog({this.live = false});
+
+  final bool live;
 
   @override
   State<_AddStoryDialog> createState() => _AddStoryDialogState();
 }
 
-class _AddStoryDialogState extends State<_AddStoryDialog> {
-  static const _colors = [
-    Color(0xFF7A2BE8),
-    Color(0xFF0E8BAB),
-    Color(0xFFED50E4),
-    Color(0xFF3B82F6),
-    Color(0xFF1F2937),
-    Color(0xFF16A34A),
-  ];
+enum _Step { options, text, media }
 
-  bool _writing = false;
-  Color _bg = _colors.first;
+class _AddStoryDialogState extends State<_AddStoryDialog> {
+  _Step _step = _Step.options;
+  int _bg = 0;
+  int _font = 0;
   final _text = TextEditingController();
-  int _hours = 24;
+  final _caption = TextEditingController();
   bool _comments = true;
+  bool _busy = false;
+  PickedFile? _file;
 
   @override
   void dispose() {
     _text.dispose();
+    _caption.dispose();
     super.dispose();
   }
 
-  void _soon(String what) => ScaffoldMessenger.of(context)
+  void _toast(String t) => ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text('$what is coming soon.')));
+    ..showSnackBar(SnackBar(content: Text(t)));
+
+  Future<void> _pickMedia() async {
+    if (!widget.live) {
+      _toast('Sign in with your phone to post photos and videos.');
+      return;
+    }
+    final files = await pickFiles(accept: 'image/*,video/*');
+    if (files.isEmpty) return;
+    final f = files.first;
+    if (f.isVideo && f.bytes.length > 64 * 1024 * 1024) {
+      _toast('Videos must be under 64 MB.');
+      return;
+    }
+    setState(() {
+      _file = f;
+      _step = _Step.media;
+    });
+  }
+
+  Future<void> _camera() async {
+    if (!widget.live) {
+      _toast('Sign in with your phone to post photos.');
+      return;
+    }
+    final bytes = await takeCameraPhoto(context);
+    if (bytes == null || !mounted) return;
+    setState(() {
+      _file = PickedFile(
+        name: 'camera_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        bytes: bytes,
+        mime: 'image/jpeg',
+      );
+      _step = _Step.media;
+    });
+  }
+
+  Future<void> _post() async {
+    if (_busy) return;
+    if (!widget.live) {
+      Navigator.of(context)
+          .pop(StoryItem.text(_text.text.trim(), _storyGradients[_bg].first));
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      if (_step == _Step.text) {
+        await StoriesRepo.instance.postText(
+          _text.text.trim(),
+          _storyGradients[_bg],
+          fontIndex: _font,
+          comments: _comments,
+        );
+      } else if (_file != null) {
+        await StoriesRepo.instance.postMedia(
+          _file!,
+          caption: _caption.text.trim(),
+          comments: _comments,
+        );
+      }
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _busy = false);
+        _toast('Could not post your story. Try again.');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1211,10 +1637,14 @@ class _AddStoryDialogState extends State<_AddStoryDialog> {
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
-        child: Padding(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(22, 14, 22, 22),
-          child: _writing ? _composer() : _options(),
+          child: switch (_step) {
+            _Step.options => _options(),
+            _Step.text => _composer(),
+            _Step.media => _mediaComposer(),
+          },
         ),
       ),
     );
@@ -1282,26 +1712,18 @@ class _AddStoryDialogState extends State<_AddStoryDialog> {
         const Padding(
           padding: EdgeInsets.fromLTRB(12, 0, 12, 16),
           child: Text(
-            'Share a moment with your friend',
+            'Share a moment with your friends',
             style: TextStyle(color: AppColors.meta),
           ),
         ),
         Row(
           children: [
-            tile(
-              Icons.photo_library_outlined,
-              'Gallery',
-              () => _soon('Photo stories'),
-            ),
-            tile(
-              Icons.photo_camera_outlined,
-              'Camera',
-              () => _soon('Camera stories'),
-            ),
+            tile(Icons.photo_library_outlined, 'Gallery', _pickMedia),
+            tile(Icons.photo_camera_outlined, 'Camera', _camera),
             tile(
               Icons.text_fields_rounded,
               'Text',
-              () => setState(() => _writing = true),
+              () => setState(() => _step = _Step.text),
             ),
           ],
         ),
@@ -1309,19 +1731,62 @@ class _AddStoryDialogState extends State<_AddStoryDialog> {
     );
   }
 
+  Widget _commentsRow() => _optionRow(
+    Icons.chat_bubble_outline,
+    'Comments',
+    subtitle: 'Allow people to reply',
+    trailing: Switch(
+      value: _comments,
+      activeThumbColor: AppColors.accent,
+      onChanged: (v) => setState(() => _comments = v),
+    ),
+  );
+
+  Widget _postButton(bool enabled) => SizedBox(
+    height: 48,
+    child: FilledButton(
+      onPressed: enabled && !_busy ? _post : null,
+      style: FilledButton.styleFrom(
+        backgroundColor: AppColors.accent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      child: _busy
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Text(
+              'Post',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+    ),
+  );
+
   Widget _composer() {
+    final g = _storyGradients[_bg];
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _header('Text story', onBack: () => setState(() => _writing = false)),
+        _header(
+          'Text story',
+          onBack: () => setState(() => _step = _Step.options),
+        ),
         const SizedBox(height: 6),
         Container(
-          height: 220,
+          height: 240,
           padding: const EdgeInsets.all(20),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: _bg,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: g,
+            ),
             borderRadius: BorderRadius.circular(18),
           ),
           child: TextField(
@@ -1331,35 +1796,32 @@ class _AddStoryDialogState extends State<_AddStoryDialog> {
             maxLength: 200,
             textAlign: TextAlign.center,
             onChanged: (_) => setState(() {}),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-            ),
+            style: storyFont(_font, size: 26),
             decoration: const InputDecoration(
               hintText: 'Type a status',
-              hintStyle: TextStyle(color: Colors.white70),
+              hintStyle: TextStyle(color: Color(0x992D2D2D)),
               border: InputBorder.none,
-              counterStyle: TextStyle(color: Colors.white70),
+              counterStyle: TextStyle(color: Color(0x992D2D2D)),
             ),
           ),
         ),
         const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            for (final c in _colors)
+            for (var i = 0; i < _storyGradients.length; i++)
               GestureDetector(
-                onTap: () => setState(() => _bg = c),
+                onTap: () => setState(() => _bg = i),
                 child: Container(
-                  width: 30,
-                  height: 30,
-                  margin: const EdgeInsets.symmetric(horizontal: 5),
+                  width: 28,
+                  height: 28,
                   decoration: BoxDecoration(
-                    color: c,
+                    gradient: LinearGradient(colors: _storyGradients[i]),
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: _bg == c ? AppColors.heading : Colors.white,
+                      color: _bg == i ? AppColors.heading : Colors.white,
                       width: 2.5,
                     ),
                   ),
@@ -1367,59 +1829,91 @@ class _AddStoryDialogState extends State<_AddStoryDialog> {
               ),
           ],
         ),
-        const SizedBox(height: 14),
-        _optionRow(
-          Icons.public,
-          'Privacy',
-          trailing: const Text(
-            'Everyone',
-            style: TextStyle(color: AppColors.meta),
-          ),
-        ),
-        _optionRow(
-          Icons.timer_outlined,
-          'Story Duration',
-          trailing: DropdownButton<int>(
-            value: _hours,
-            underline: const SizedBox.shrink(),
-            items: [
-              for (final h in const [12, 24, 36, 52])
-                DropdownMenuItem(value: h, child: Text('$h Hours')),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 40,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (var i = 0; i < 10; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: Text('Aa', style: storyFont(i, size: 15)),
+                    selected: _font == i,
+                    selectedColor: AppColors.accentSoft,
+                    onSelected: (_) => setState(() => _font = i),
+                  ),
+                ),
             ],
-            onChanged: (v) => setState(() => _hours = v ?? 24),
-          ),
-        ),
-        _optionRow(
-          Icons.chat_bubble_outline,
-          'Comments',
-          subtitle: 'Allow people to comment',
-          trailing: Switch(
-            value: _comments,
-            activeThumbColor: AppColors.accent,
-            onChanged: (v) => setState(() => _comments = v),
           ),
         ),
         const SizedBox(height: 10),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            onPressed: _text.text.trim().isEmpty
-                ? null
-                : () =>
-                      Navigator.of(context)
-                          .pop(StoryItem.text(_text.text.trim(), _bg)),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            child: const Text(
-              'Post',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        _commentsRow(),
+        const SizedBox(height: 10),
+        _postButton(_text.text.trim().isNotEmpty),
+      ],
+    );
+  }
+
+  Widget _mediaComposer() {
+    final f = _file;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _header(
+          f?.isVideo == true ? 'Video story' : 'Photo story',
+          onBack: () => setState(() {
+            _file = null;
+            _step = _Step.options;
+          }),
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            height: 300,
+            color: const Color(0xFF1E1530),
+            alignment: Alignment.center,
+            child: f == null
+                ? const SizedBox.shrink()
+                : f.isImage
+                ? Image.memory(f.bytes, fit: BoxFit.contain)
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.play_circle_fill_rounded,
+                        color: Colors.white,
+                        size: 54,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        f.name,
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _caption,
+          maxLength: 200,
+          decoration: InputDecoration(
+            hintText: 'Add a caption',
+            filled: true,
+            fillColor: AppColors.lavenderSoft,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
             ),
           ),
         ),
+        _commentsRow(),
+        const SizedBox(height: 10),
+        _postButton(f != null),
       ],
     );
   }

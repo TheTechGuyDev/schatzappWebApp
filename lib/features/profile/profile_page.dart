@@ -1,5 +1,9 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../auth/web_auth.dart';
 
 import '../../data/demo_data.dart';
 import '../../shell/app_shell.dart';
@@ -44,8 +48,20 @@ const _languages = [
 ];
 
 class _ProfilePageState extends State<ProfilePage> {
-  _Section? _section = _Section.language;
+  _Section? _section = _Section.account;
   String _lang = 'en';
+  static const _langKey = 'web_language';
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((p) {
+      final l = p.getString(_langKey);
+      if (l != null && mounted && _languages.any((x) => x.code == l)) {
+        setState(() => _lang = l);
+      }
+    });
+  }
 
   String get _langName => _languages.firstWhere((l) => l.code == _lang).name;
 
@@ -63,6 +79,7 @@ class _ProfilePageState extends State<ProfilePage> {
         selected: _lang,
         onSelect: (c) {
           setState(() => _lang = c);
+          SharedPreferences.getInstance().then((p) => p.setString(_langKey, c));
           ScaffoldMessenger.of(context)
             ..hideCurrentSnackBar()
             ..showSnackBar(
@@ -367,17 +384,140 @@ class _LanguageRow extends StatelessWidget {
 // Account (Personal Information)
 // ---------------------------------------------------------------------------
 
-class _AccountPanel extends StatelessWidget {
+/// Account details, read from the same rows the phone's Personal
+/// Information page uses (profiles, kyc_submissions, wallets).
+class _Account {
+  String fullName = '';
+  String displayName = '';
+  String email = '';
+  String phone = '';
+  String country = '';
+  String accountNumber = '';
+  String kycStatus = '';
+  String joined = '';
+  String? photo;
+
+  static Future<_Account> load() async {
+    final sb = Supabase.instance.client;
+    final me = sb.auth.currentUser!;
+    final a = _Account();
+    try {
+      final p = await sb
+          .from('profiles')
+          .select('full_name, username, phone_number, avatar_url, created_at')
+          .eq('id', me.id)
+          .maybeSingle();
+      a.displayName = '${p?['username'] ?? ''}'.trim();
+      a.fullName = '${p?['full_name'] ?? ''}'.trim();
+      a.phone = '${p?['phone_number'] ?? ''}';
+      a.photo = p?['avatar_url'] as String?;
+      final j = DateTime.tryParse('${p?['created_at'] ?? ''}')?.toLocal();
+      if (j != null) {
+        const m = [
+          'Jan',
+          'Feb',
+          'Mar',
+          'Apr',
+          'May',
+          'Jun',
+          'Jul',
+          'Aug',
+          'Sep',
+          'Oct',
+          'Nov',
+          'Dec',
+        ];
+        a.joined = '${j.day} ${m[j.month - 1]} ${j.year}';
+      }
+    } catch (_) {}
+    try {
+      final k = await sb
+          .from('kyc_submissions')
+          .select('first_name, last_name, country, status')
+          .eq('user_id', me.id)
+          .order('submitted_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      final legal = '${k?['first_name'] ?? ''} ${k?['last_name'] ?? ''}'.trim();
+      if (legal.isNotEmpty) a.fullName = legal;
+      a.country = '${k?['country'] ?? ''}';
+      a.kycStatus = '${k?['status'] ?? ''}';
+    } catch (_) {}
+    try {
+      final w = await sb
+          .from('wallets')
+          .select('schatz_account_number, email, kyc_status')
+          .eq('user_id', me.id)
+          .maybeSingle();
+      a.accountNumber = '${w?['schatz_account_number'] ?? ''}';
+      a.email = '${w?['email'] ?? ''}';
+      if (a.kycStatus.isEmpty) a.kycStatus = '${w?['kyc_status'] ?? ''}';
+    } catch (_) {}
+    final authEmail = me.email ?? '';
+    if (a.email.isEmpty && !authEmail.endsWith('.invalid')) a.email = authEmail;
+    return a;
+  }
+}
+
+class _AccountPanel extends StatefulWidget {
   const _AccountPanel();
 
   @override
+  State<_AccountPanel> createState() => _AccountPanelState();
+}
+
+class _AccountPanelState extends State<_AccountPanel> {
+  _Account? _a;
+
+  bool get _live => WebAuth.instance.isLive;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_live) {
+      _Account.load().then((a) {
+        if (mounted) setState(() => _a = a);
+      });
+    }
+  }
+
+  String _v(String live, String demo) =>
+      !_live ? demo : (live.isEmpty ? 'Not set' : live);
+
+  @override
   Widget build(BuildContext context) {
+    if (_live && _a == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.accent),
+      );
+    }
+    final a = _a ?? _Account();
+    final verified =
+        !_live ||
+        [
+          'approved',
+          'verified',
+          'completed',
+        ].contains(a.kycStatus.toLowerCase());
+    final statusText = !_live
+        ? 'Verified'
+        : (verified
+              ? 'Verified'
+              : (a.kycStatus.isEmpty
+                    ? 'Not verified'
+                    : '${a.kycStatus[0].toUpperCase()}${a.kycStatus.substring(1)}'));
     return ListView(
       padding: const EdgeInsets.fromLTRB(32, 30, 32, 28),
       children: [
         Row(
           children: [
-            const Avatar(name: demoCurrentUserName, size: 72),
+            Avatar(
+              name: _live
+                  ? (a.fullName.isEmpty ? 'Me' : a.fullName)
+                  : demoCurrentUserName,
+              photoUrl: a.photo,
+              size: 72,
+            ),
             const SizedBox(width: 18),
             Expanded(
               child: Column(
@@ -406,21 +546,25 @@ class _AccountPanel extends StatelessWidget {
         _InfoCard(
           title: 'Personal Details',
           rows: [
-            ('Full legal name', 'Chloe Bites'),
-            ('Display name', 'Chloe Bites'),
-
-            ('Email address', maskEmail('kestawealth@gmail.com')),
-            ('Phone number', '+234 701 000 1234'),
-            ('Country of residence', 'Nigeria'),
+            ('Full legal name', _v(a.fullName, 'Chloe Bites')),
+            ('Display name', _v(a.displayName, 'Chloe Bites')),
+            (
+              'Email address',
+              _live
+                  ? (a.email.isEmpty ? 'Not set' : maskEmail(a.email))
+                  : maskEmail('kestawealth@gmail.com'),
+            ),
+            ('Phone number', _v(a.phone, '+234 701 000 1234')),
+            ('Country of residence', _v(a.country, 'Nigeria')),
           ],
         ),
         const SizedBox(height: 18),
         _InfoCard(
           title: 'Account Information',
-          rows: const [
-            ('Account number', 'SFZ70100017391'),
+          rows: [
+            ('Account number', _v(a.accountNumber, 'SFZ70100017391')),
             ('Account status', ''),
-            ('Date joined', '28 Aug 2026'),
+            ('Date joined', _v(a.joined, '28 Aug 2026')),
           ],
           trailingFor: (label, value) {
             if (label == 'Account status') {
@@ -430,27 +574,37 @@ class _AccountPanel extends StatelessWidget {
                   vertical: 3,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFD9F7DD),
+                  color: verified
+                      ? const Color(0xFFD9F7DD)
+                      : const Color(0xFFFFF1D6),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.verified, size: 15, color: Color(0xFF14A23A)),
-                    SizedBox(width: 4),
+                    Icon(
+                      verified ? Icons.verified : Icons.pending_outlined,
+                      size: 15,
+                      color: verified
+                          ? const Color(0xFF14A23A)
+                          : const Color(0xFFB7791F),
+                    ),
+                    const SizedBox(width: 4),
                     Text(
-                      'Verified',
+                      statusText,
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF14A23A),
+                        color: verified
+                            ? const Color(0xFF14A23A)
+                            : const Color(0xFFB7791F),
                       ),
                     ),
                   ],
                 ),
               );
             }
-            if (label == 'Account number') {
+            if (label == 'Account number' && value != 'Not set') {
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
