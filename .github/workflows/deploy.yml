@@ -36,7 +36,11 @@ jobs:
         run: >
           flutter build web --release
           --no-web-resources-cdn
-          --base-href "/${{ github.event.repository.name }}/"
+          --base-href "/"
+
+      # Served at https://web.schatzapp.com/ (custom domain set in Pages settings).
+      - name: SPA fallback for deep links
+        run: cp build/web/index.html build/web/404.html
 
       - uses: actions/configure-pages@v5
 
