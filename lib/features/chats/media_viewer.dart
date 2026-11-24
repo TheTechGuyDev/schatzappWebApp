@@ -255,9 +255,11 @@ class _MediaViewerState extends State<_MediaViewer> {
                     ),
                     _Tool(
                       icon: _isStarred
-                          ? Icons.star_rounded
-                          : Icons.star_outline_rounded,
-                      tip: _isStarred ? 'Unstar' : 'Star',
+                          ? Icons.label_important_sharp
+                          : Icons.label_important_outline_sharp,
+                      tip: _isStarred
+                          ? 'Unmark as important'
+                          : 'Mark as important',
                       active: _isStarred,
                       onTap: () async {
                         final was = _isStarred;
@@ -751,9 +753,11 @@ class _DocViewerState extends State<_DocViewer> {
                       ),
                       _Tool(
                         icon: _starred
-                            ? Icons.star_rounded
-                            : Icons.star_outline_rounded,
-                        tip: _starred ? 'Unstar' : 'Star',
+                            ? Icons.label_important_sharp
+                            : Icons.label_important_outline_sharp,
+                        tip: _starred
+                            ? 'Unmark as important'
+                            : 'Mark as important',
                         active: _starred,
                         onTap: () async {
                           final was = _starred;

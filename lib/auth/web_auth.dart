@@ -12,9 +12,11 @@ import 'device_info.dart';
 /// Web session state for SchatzApp Web.
 ///
 /// Rules (also enforced on the server):
-///  * 4 hours with no activity  -> logged out
-///  * "Keep me signed in" ticked -> up to 7 days, unticked -> up to 24 hours
+///  * "Keep me signed in" ticked: no idle logout; the 7 days restart every
+///    time the browser is used (like WhatsApp Web)
+///  * Not ticked: 4 hours with no activity or 24 hours in total -> logged out
 ///  * Logging the device out on the phone signs this tab out at once
+///  * A network glitch (offline, laptop waking up) never logs out
 class WebAuth extends ChangeNotifier {
   WebAuth._();
   static final WebAuth instance = WebAuth._();
@@ -22,7 +24,9 @@ class WebAuth extends ChangeNotifier {
   static const _kDeviceId = 'schatz_web_device_id';
   static const _kExpires = 'schatz_web_device_expires';
   static const _kLastActive = 'schatz_web_last_active';
+  static const _kKeep = 'schatz_web_keep_signed_in';
   static const idleLimit = Duration(hours: 4);
+  static const keepWindow = Duration(days: 7);
   static const _heartbeatEvery = Duration(minutes: 2);
 
   SupabaseClient get _sb => Supabase.instance.client;
@@ -30,6 +34,7 @@ class WebAuth extends ChangeNotifier {
 
   String? _deviceId;
   DateTime? _expiresAt;
+  bool _keep = true;
   DateTime _lastActivity = DateTime.now();
   DateTime? _lastHeartbeat;
   bool _activitySinceHeartbeat = true;
@@ -59,6 +64,7 @@ class WebAuth extends ChangeNotifier {
     _deviceId = _prefs.getString(_kDeviceId);
     final exp = _prefs.getString(_kExpires);
     _expiresAt = exp == null ? null : DateTime.tryParse(exp);
+    _keep = _prefs.getBool(_kKeep) ?? true;
     final last = _prefs.getInt(_kLastActive);
     if (last != null) {
       _lastActivity = DateTime.fromMillisecondsSinceEpoch(last);
@@ -69,7 +75,7 @@ class WebAuth extends ChangeNotifier {
       return;
     }
     // Closed the tab and came back: check the rules before showing anything.
-    if (DateTime.now().difference(_lastActivity) > idleLimit) {
+    if (!_keep && DateTime.now().difference(_lastActivity) > idleLimit) {
       await signOut(reason: 'You were logged out after 4 hours of inactivity.');
       return;
     }
@@ -129,8 +135,10 @@ class WebAuth extends ChangeNotifier {
     );
     _deviceId = r['device_id'] as String;
     _expiresAt = DateTime.parse(r['device_expires_at'] as String).toLocal();
+    _keep = r['keep_signed_in'] != false;
     await _prefs.setString(_kDeviceId, _deviceId!);
     await _prefs.setString(_kExpires, _expiresAt!.toIso8601String());
+    await _prefs.setBool(_kKeep, _keep);
     logoutReason = null;
     _markActive(save: true);
     _start();
@@ -181,8 +189,10 @@ class WebAuth extends ChangeNotifier {
       );
       _deviceId = '${r['device_id']}';
       _expiresAt = DateTime.parse('${r['device_expires_at']}').toLocal();
+      _keep = r['keep_signed_in'] != false && keepSignedIn;
       await _prefs.setString(_kDeviceId, _deviceId!);
       await _prefs.setString(_kExpires, _expiresAt!.toIso8601String());
+      await _prefs.setBool(_kKeep, _keep);
     } catch (e, st) {
       // ignore: avoid_print
       print('codeLogin session error: $e\n$st');
@@ -247,7 +257,7 @@ class WebAuth extends ChangeNotifier {
   Future<void> _check() async {
     if (!signedIn || demoMode) return;
     final now = DateTime.now();
-    if (now.difference(_lastActivity) > idleLimit) {
+    if (!_keep && now.difference(_lastActivity) > idleLimit) {
       await signOut(reason: 'You were logged out after 4 hours of inactivity.');
     } else if (_expiresAt != null && now.isAfter(_expiresAt!)) {
       await signOut(reason: 'Your web session ended. Scan the QR code again.');
@@ -269,6 +279,12 @@ class WebAuth extends ChangeNotifier {
         params: {'p_device_id': id},
       );
       switch (status) {
+        case 'active':
+          // Keep me signed in: the 7 days restart with every use.
+          if (_keep) {
+            _expiresAt = DateTime.now().add(keepWindow);
+            await _prefs.setString(_kExpires, _expiresAt!.toIso8601String());
+          }
         case 'inactive':
           await signOut(
             reason: 'You were logged out after 4 hours of inactivity.',
@@ -285,13 +301,50 @@ class WebAuth extends ChangeNotifier {
             revoke: false,
           );
       }
-    } on AuthException {
-      await signOut(
-        reason: 'This device was logged out from your phone.',
-        revoke: false,
-      );
+    } on AuthRetryableFetchException {
+      // Offline or the laptop just woke up: try again on the next tick.
+      _activitySinceHeartbeat = true;
+    } on AuthException catch (e) {
+      if (await _sessionReallyEnded(e)) {
+        await signOut(
+          reason: 'This device was logged out from your phone.',
+          revoke: false,
+        );
+      } else {
+        _activitySinceHeartbeat = true;
+      }
+    } on PostgrestException catch (e) {
+      // An expired access token is refreshed by Supabase; only a refresh
+      // token that the server rejected means the session is gone.
+      if (await _sessionReallyEnded(e)) {
+        await signOut(
+          reason: 'This device was logged out from your phone.',
+          revoke: false,
+        );
+      } else {
+        _activitySinceHeartbeat = true;
+      }
     } catch (_) {
-      // Offline: the local 4-hour and expiry checks still apply.
+      // Offline: try again later. Nothing is logged out on a network error.
+      _activitySinceHeartbeat = true;
+    }
+  }
+
+  /// True only when the server says the login itself is no longer valid
+  /// (refresh token revoked or deleted). Network problems return false.
+  Future<bool> _sessionReallyEnded(Object error) async {
+    try {
+      await _sb.auth.refreshSession();
+      return false;
+    } on AuthRetryableFetchException {
+      return false;
+    } on AuthApiException catch (e) {
+      final code = e.statusCode;
+      return code == '400' || code == '401' || code == '403';
+    } on AuthSessionMissingException {
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -362,6 +415,7 @@ class WebAuth extends ChangeNotifier {
     await _prefs.remove(_kDeviceId);
     await _prefs.remove(_kExpires);
     await _prefs.remove(_kLastActive);
+    await _prefs.remove(_kKeep);
   }
 
   void enterDemo() {

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// Left-menu icons drawn to match the supplied icon set:
@@ -29,6 +30,19 @@ class NavIcon extends StatelessWidget {
         active ? Icons.call : Icons.call_outlined,
         color: color,
         size: size,
+      );
+    }
+    // Chats uses FontAwesome comment, same as the mobile app.
+    if (kind == NavIconKind.chats) {
+      return SizedBox.square(
+        dimension: size,
+        child: Center(
+          child: FaIcon(
+            active ? FontAwesomeIcons.solidComment : FontAwesomeIcons.comment,
+            color: color,
+            size: size * 0.82,
+          ),
+        ),
       );
     }
     return CustomPaint(

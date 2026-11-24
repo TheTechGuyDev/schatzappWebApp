@@ -36,7 +36,8 @@ class StoryViewer {
   final DateTime? at;
 }
 
-/// Reactions on a story: counts and mine (favorite, peace, thumbs).
+/// Reactions on a story: counts and mine (favorite, peace, laugh, sad,
+/// angry). Old 'thumbs' rows count as laugh.
 class StoryReactions {
   StoryReactions(this.counts, this.mine);
 
@@ -53,7 +54,20 @@ class StoriesRepo {
   SupabaseClient get _sb => Supabase.instance.client;
   String get _me => _sb.auth.currentUser!.id;
 
-  static const reactionTypes = ['favorite', 'peace', 'thumbs'];
+  static const reactionTypes = ['favorite', 'peace', 'laugh', 'sad', 'angry'];
+
+  /// Emoji for each reaction type, in display order.
+  static const reactionEmoji = {
+    'favorite': '❤️',
+    'peace': '✌️',
+    'laugh': '😂',
+    'sad': '😢',
+    'angry': '😠',
+  };
+
+  /// Each user can pick at most this many reactions per post (also enforced
+  /// by a database trigger).
+  static const maxReactionsPerUser = 2;
 
   // -------------------------------------------------------------------------
   // Helpers
@@ -485,7 +499,8 @@ class StoriesRepo {
     final counts = {for (final t in reactionTypes) t: 0};
     final mine = <String>{};
     for (final r in rows) {
-      final t = '${r['reaction_type']}';
+      var t = '${r['reaction_type']}';
+      if (t == 'thumbs') t = 'laugh';
       if (!counts.containsKey(t)) continue;
       counts[t] = counts[t]! + 1;
       if (r['user_id'] == _me) mine.add(t);
@@ -494,19 +509,21 @@ class StoriesRepo {
   }
 
   Future<void> toggleReaction(String statusId, String type) async {
+    // 'laugh' replaced the old 'thumbs', so both are treated as one.
+    final same = type == 'laugh' ? ['laugh', 'thumbs'] : [type];
     final existing = await _sb
         .from('status_reactions')
         .select('id')
         .eq('status_id', statusId)
         .eq('user_id', _me)
-        .eq('reaction_type', type);
+        .inFilter('reaction_type', same);
     if ((existing as List).isNotEmpty) {
       await _sb
           .from('status_reactions')
           .delete()
           .eq('status_id', statusId)
           .eq('user_id', _me)
-          .eq('reaction_type', type);
+          .inFilter('reaction_type', same);
     } else {
       await _sb.from('status_reactions').insert({
         'status_id': statusId,

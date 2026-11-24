@@ -168,7 +168,11 @@ class _MessageBubbleState extends State<MessageBubble> {
         if (m.isStarred)
           Padding(
             padding: const EdgeInsets.only(right: 3),
-            child: Icon(Icons.star_rounded, size: 13, color: metaColor),
+            child: Icon(
+              Icons.label_important_sharp,
+              size: 13,
+              color: metaColor,
+            ),
           ),
         if (m.isEdited)
           Padding(

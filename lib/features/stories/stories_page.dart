@@ -814,11 +814,17 @@ class _FeedPost extends StatefulWidget {
 }
 
 class _FeedPostState extends State<_FeedPost> {
-  // Same three reactions as the phone: favorite, peace, thumbs.
+  // Reactions: ❤️ ✌️ 😂 😢 😠, at most 2 per user.
   static const _types = StoriesRepo.reactionTypes;
   late final List<int> _counts = widget.live
-      ? [0, 0, 0]
-      : [(widget.seed * 3 + 1) % 5, (widget.seed * 2) % 3, widget.seed % 2];
+      ? List.filled(_types.length, 0)
+      : [
+          (widget.seed * 3 + 1) % 5,
+          (widget.seed * 2) % 3,
+          widget.seed % 2,
+          (widget.seed + 1) % 2,
+          0,
+        ];
   final Set<int> _mineSet = {};
 
   String? get _statusId =>
@@ -850,6 +856,10 @@ class _FeedPostState extends State<_FeedPost> {
 
   Future<void> _react(int r) async {
     final was = _mineSet.contains(r);
+    if (!was && _mineSet.length >= StoriesRepo.maxReactionsPerUser) {
+      _toast('You can pick up to 2 reactions. Tap one to remove it first.');
+      return;
+    }
     setState(() {
       was ? _mineSet.remove(r) : _mineSet.add(r);
       _counts[r] += was ? -1 : 1;
@@ -1011,32 +1021,37 @@ class _FeedPostState extends State<_FeedPost> {
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
             child: Row(
               children: [
-                _ReactionButton(
-                  icon: Icon(
-                    _mineSet.contains(0)
-                        ? Icons.favorite
-                        : Icons.favorite_border,
-                    color: const Color(0xFFE91E4D),
-                    size: 28,
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < _types.length; i++)
+                          _ReactionButton(
+                            icon: i == 0
+                                ? Icon(
+                                    _mineSet.contains(0)
+                                        ? Icons.favorite
+                                        : Icons.favorite_border,
+                                    color: const Color(0xFFE91E4D),
+                                    size: 24,
+                                  )
+                                : Text(
+                                    StoriesRepo.reactionEmoji[_types[i]]!,
+                                    style: const TextStyle(fontSize: 20),
+                                  ),
+                            count: _counts[i],
+                            active: _mineSet.contains(i),
+                            activeColor: i == 0
+                                ? const Color(0xFFE91E4D)
+                                : AppColors.accent,
+                            onTap: () => _react(i),
+                          ),
+                      ],
+                    ),
                   ),
-                  count: _counts[0],
-                  active: _mineSet.contains(0),
-                  activeColor: const Color(0xFFE91E4D),
-                  onTap: () => _react(0),
                 ),
-                _ReactionButton(
-                  icon: const Text('✌️', style: TextStyle(fontSize: 24)),
-                  count: _counts[1],
-                  active: _mineSet.contains(1),
-                  onTap: () => _react(1),
-                ),
-                _ReactionButton(
-                  icon: const Text('👍', style: TextStyle(fontSize: 24)),
-                  count: _counts[2],
-                  active: _mineSet.contains(2),
-                  onTap: () => _react(2),
-                ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Material(
                   color: const Color(0xFFF1EEF6),
                   borderRadius: BorderRadius.circular(24),
@@ -1098,12 +1113,12 @@ class _ReactionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(right: 18),
+      padding: const EdgeInsets.only(right: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
           decoration: BoxDecoration(
             color: active
                 ? activeColor.withValues(alpha: 0.1)
@@ -1113,11 +1128,11 @@ class _ReactionButton extends StatelessWidget {
           child: Row(
             children: [
               icon,
-              const SizedBox(width: 8),
+              const SizedBox(width: 5),
               Text(
                 '$count',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
                   color: active ? activeColor : AppColors.body,
                 ),

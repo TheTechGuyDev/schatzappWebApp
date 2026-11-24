@@ -488,6 +488,25 @@ class _ChatsPageState extends State<ChatsPage> {
     });
   }
 
+  /// Lock Chat in the info panel: a locked chat moves to Private Chats (the
+  /// password was just checked), an unlocked one goes back to the list.
+  Future<void> _lockChanged(DemoChat chat, bool locked) async {
+    if (_live) {
+      await _repo.refresh();
+    } else {
+      _demoChats.removeWhere((c) => c.id == chat.id);
+      _demoPrivate.removeWhere((c) => c.id == chat.id);
+      (locked ? _demoPrivate : _demoChats).insert(0, chat);
+    }
+    if (!mounted) return;
+    setState(() {
+      if (locked) _privateUnlocked = true;
+      _privateMode = locked;
+      _query = '';
+      _selectedId = chat.id;
+    });
+  }
+
   void _closePrivate() => setState(() {
     _privateMode = false;
     _query = '';
@@ -777,6 +796,7 @@ class _ChatsPageState extends State<ChatsPage> {
             onOpenMedia: (m, url) =>
                 _openMedia(chat, _feed?.messages ?? const [], m, url),
             onOpenDocument: (m) => _openDoc(chat, m),
+            onLockChanged: (locked) => _lockChanged(chat, locked),
             onChatRemoved: () {
               _rememberChat(null);
               setState(() {

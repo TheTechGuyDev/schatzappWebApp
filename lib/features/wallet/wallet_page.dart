@@ -92,7 +92,7 @@ class _WalletPageState extends State<WalletPage> {
             hidden: _hidden,
             onToggleHidden: () => setState(() => _hidden = !_hidden),
             onOpenTx: _openTx,
-            txs: _repo.transactions,
+            txs: _repo.transactions.take(10).toList(),
             balanceText: 'SFZ ${WalletRepo.money(_repo.schatzBalance)}',
             localText: _repo.localEquivalent == null || _repo.currency.isEmpty
                 ? ''

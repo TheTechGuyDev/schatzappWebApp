@@ -1,3 +1,4 @@
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:web/web.dart' as web;
 
@@ -25,6 +26,7 @@ class ContactInfoPanel extends StatefulWidget {
     this.onOpenMedia,
     this.onOpenDocument,
     this.onChatRemoved,
+    this.onLockChanged,
   });
 
   final DemoChat chat;
@@ -48,6 +50,9 @@ class ContactInfoPanel extends StatefulWidget {
   /// The chat was deleted or the group was left.
   final VoidCallback? onChatRemoved;
 
+  /// Lock Chat was switched (true = moved to Private Chats).
+  final ValueChanged<bool>? onLockChanged;
+
   @override
   State<ContactInfoPanel> createState() => _ContactInfoPanelState();
 }
@@ -60,6 +65,8 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
   ChatInfo? _info;
   bool _loading = false;
   bool _demoMuted = false;
+  late bool _locked = widget.chat.isLocked;
+  bool _lockBusy = false;
 
   @override
   void initState() {
@@ -70,6 +77,11 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
+      if (!widget.chat.isGroup) {
+        _repo.isMyPrivateLock(widget.chat.id).then((v) {
+          if (mounted && !_lockBusy) setState(() => _locked = v);
+        });
+      }
       final i = await ChatInfo.load(widget.chat);
       if (mounted) setState(() => _info = i);
     } catch (_) {
@@ -209,6 +221,67 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
     }
   }
 
+  /// Lock Chat switch: the app password is asked first (like the phone),
+  /// then set_private_lock moves the chat in or out of Private Chats.
+  Future<void> _toggleLock(bool to) async {
+    if (_lockBusy) return;
+    setState(() => _lockBusy = true);
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => PasswordGateDialog(
+          verify: widget.live ? _repo.verifyAppPassword : null,
+        ),
+      );
+      if (ok != true || !mounted) return;
+      if (widget.live) await _repo.setPrivateLock(widget.chat.id, to);
+      if (!mounted) return;
+      setState(() => _locked = to);
+      _toast(
+        to
+            ? 'Chat locked. It is now in Private Chats.'
+            : 'Chat unlocked. It is back in your chats.',
+      );
+      widget.onLockChanged?.call(to);
+    } catch (_) {
+      _toast(to ? 'Could not lock this chat' : 'Could not unlock this chat');
+    } finally {
+      if (mounted) setState(() => _lockBusy = false);
+    }
+  }
+
+  void _openGroupsInCommon(List<InfoGroup> groups) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => DialogShell(
+        title: 'Groups in Common',
+        width: 440,
+        child: groups.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.fromLTRB(24, 10, 24, 34),
+                child: Text(
+                  'No groups in common',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.meta),
+                ),
+              )
+            : ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                children: [
+                  for (final g in groups)
+                    _MemberRow(
+                      name: g.name,
+                      photoUrl: g.avatarUrl,
+                      isGroup: true,
+                      trailing: '${g.memberCount} members',
+                    ),
+                ],
+              ),
+      ),
+    );
+  }
+
   // -------------------------------------------------------------------------
 
   List<(DemoMessage, String)> get _media => [
@@ -254,18 +327,18 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
     );
   }
 
-  void _openStarred() {
+  void _openImportant() {
     final starred = widget.messages.where((m) => m.isStarred).toList();
     showDialog<void>(
       context: context,
       builder: (ctx) => DialogShell(
-        title: 'Starred messages',
+        title: 'Important',
         width: 460,
         child: starred.isEmpty
             ? const Padding(
                 padding: EdgeInsets.fromLTRB(24, 10, 24, 34),
                 child: Text(
-                  'Star messages from the message menu to find them here.',
+                  'Mark messages as important from the message menu to find them here.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.meta),
                 ),
@@ -284,7 +357,7 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                   return ListTile(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 6),
                     leading: const Icon(
-                      Icons.star_rounded,
+                      Icons.label_important_sharp,
                       color: AppColors.accent,
                     ),
                     title: Text(
@@ -345,7 +418,9 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
     final media = live ? _media : const <(DemoMessage, String)>[];
     final docs = live ? _docs : const <DemoMessage>[];
     final links = live ? _links : const <(DemoMessage, String)>[];
-    final starredCount = widget.messages.where((m) => m.isStarred).length;
+    final shownLinks = live
+        ? [for (final (_, u) in links) (_linkTitle(u), u)]
+        : c.links;
     final mediaSummary = live
         ? '${media.length} Media, ${links.length} Links, ${docs.length} Files'
         : '${c.mediaCount} Media, ${c.links.length} Links, 0 Files';
@@ -523,6 +598,28 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                 ),
               const SizedBox(height: 14),
 
+              // Lock Chat (one-to-one chats, same as the phone)
+              if (!group)
+                _Row(
+                  icon: Icons.private_connectivity_outlined,
+                  title: 'Lock Chat',
+                  subtitle: _locked
+                      ? 'Unlock and unhide this chat on this device.'
+                      : 'Lock and hide this chat on this device.',
+                  onTap: () => _toggleLock(!_locked),
+                  trailing: Switch(
+                    value: _locked,
+                    onChanged: _lockBusy ? null : _toggleLock,
+                    activeThumbColor: Colors.white,
+                    activeTrackColor: AppColors.accent,
+                    inactiveThumbColor: Colors.white,
+                    inactiveTrackColor: const Color(0xFFD5D9DE),
+                    trackOutlineColor: const WidgetStatePropertyAll(
+                      Colors.transparent,
+                    ),
+                  ),
+                ),
+
               // Media, links and files
               _Row(
                 icon: Icons.perm_media_outlined,
@@ -533,10 +630,11 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                     : () => _toast(
                         'Sign in with your phone to see shared media.',
                       ),
+                last: media.isNotEmpty || shownLinks.isNotEmpty,
               ),
               if (media.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 10, 4, 10),
+                  padding: const EdgeInsets.fromLTRB(4, 10, 4, 6),
                   child: Row(
                     children: [
                       for (final (m, u) in media.take(4))
@@ -555,11 +653,24 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                     ],
                   ),
                 ),
-              if (!live && c.links.isNotEmpty) ...[
+              if (shownLinks.isNotEmpty) ...[
                 const _SectionTitle('Links'),
-                for (final l in c.links) _LinkRow(title: l.$1, url: l.$2),
-                const Divider(height: 14, color: AppColors.border),
+                for (final l in shownLinks.take(3))
+                  _LinkRow(title: l.$1, url: l.$2),
+                if (shownLinks.length > 3)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: _openMediaLinks,
+                      child: Text(
+                        'See all ${shownLinks.length} links',
+                        style: const TextStyle(color: AppColors.accent),
+                      ),
+                    ),
+                  ),
               ],
+              if (media.isNotEmpty || shownLinks.isNotEmpty)
+                const Divider(height: 14, color: AppColors.border),
 
               // Members (groups) or groups in common (people)
               if (group) ...[
@@ -583,52 +694,42 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                   for (final m in c.members) _MemberRow(name: m),
                 ],
                 const Divider(height: 14, color: AppColors.border),
-              ] else if (live) ...[
-                _SectionTitle(
-                  'Groups in Common (${i?.groupsInCommon.length ?? 0})',
-                ),
-                if ((i?.groupsInCommon ?? const []).isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(6, 2, 6, 8),
-                    child: Text(
-                      'No groups in common',
-                      style: TextStyle(fontSize: 13, color: AppColors.meta),
-                    ),
-                  ),
-                for (final g in i?.groupsInCommon ?? const <InfoGroup>[])
-                  _MemberRow(
-                    name: g.name,
-                    photoUrl: g.avatarUrl,
-                    isGroup: true,
-                    trailing: '${g.memberCount} members',
-                  ),
-                const Divider(height: 14, color: AppColors.border),
               ] else
                 _Row(
-                  icon: Icons.groups_outlined,
+                  icon: Icons.group_outlined,
                   title: 'Groups in Common',
-                  subtitle: '${c.groupsInCommon} Groups',
-                  onTap: () {},
+                  subtitle: live
+                      ? '${i?.groupsInCommon.length ?? 0} Groups'
+                      : '${c.groupsInCommon} Groups',
+                  onTap: live
+                      ? () => _openGroupsInCommon(
+                          i?.groupsInCommon ?? const <InfoGroup>[],
+                        )
+                      : () => _toast(
+                          'Sign in with your phone to see groups in common.',
+                        ),
                 ),
               _Row(
-                icon: Icons.star_border_rounded,
-                title: 'Starred messages',
-                subtitle: starredCount == 0
-                    ? 'None yet'
-                    : '$starredCount starred',
-                onTap: _openStarred,
+                icon: Icons.label_important_outline_sharp,
+                title: 'Important',
+                subtitle: 'View important chats',
+                onTap: _openImportant,
+              ),
+              _Row(
+                leading: const FaIcon(
+                  FontAwesomeIcons.broom,
+                  color: AppColors.accent,
+                  size: 21,
+                ),
+                title: 'Clear Chat',
+                subtitle: 'Delete all messages in this chat',
+                onTap: () => _onMore(_More.clear),
               ),
               _Row(
                 icon: Icons.palette_outlined,
                 title: 'Chat Theme',
                 subtitle: 'Pick your preference',
                 onTap: widget.onChatTheme,
-              ),
-              _Row(
-                icon: Icons.cleaning_services_outlined,
-                title: 'Clear Chat',
-                subtitle: 'Delete all messages in this chat for you',
-                onTap: () => _onMore(_More.clear),
                 last: true,
               ),
             ],
@@ -673,6 +774,13 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
       child: Text(label, style: const TextStyle(color: AppColors.missed)),
     );
   }
+}
+
+/// Short label for a link: its host without "www.".
+String _linkTitle(String url) {
+  final u = Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
+  final h = (u?.host ?? '').replaceFirst(RegExp(r'^www\.'), '');
+  return h.isEmpty ? url : h;
 }
 
 String _messageSummary(DemoMessage m) {
@@ -1015,14 +1123,18 @@ class _ActionCardBody extends StatelessWidget {
 
 class _Row extends StatelessWidget {
   const _Row({
-    required this.icon,
+    this.icon,
+    this.leading,
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.trailing,
     this.last = false,
   });
 
-  final IconData icon;
+  final IconData? icon;
+  final Widget? leading;
+  final Widget? trailing;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
@@ -1044,7 +1156,9 @@ class _Row extends StatelessWidget {
           children: [
             SizedBox(
               width: 36,
-              child: Icon(icon, color: AppColors.accent, size: 26),
+              child: Center(
+                child: leading ?? Icon(icon, color: AppColors.accent, size: 26),
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -1067,7 +1181,12 @@ class _Row extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: AppColors.body, size: 22),
+            trailing ??
+                const Icon(
+                  Icons.chevron_right,
+                  color: AppColors.body,
+                  size: 22,
+                ),
           ],
         ),
       ),
@@ -1081,49 +1200,58 @@ class _LinkRow extends StatelessWidget {
   final String title;
   final String url;
 
+  void _open() {
+    final u = url.startsWith('http') ? url : 'https://$url';
+    web.window.open(u, '_blank', 'noopener');
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 5, 4, 5),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: const BoxDecoration(
-              color: AppColors.accentSoft,
-              shape: BoxShape.circle,
+    return InkWell(
+      onTap: _open,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 5, 4, 5),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: const BoxDecoration(
+                color: AppColors.accentSoft,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.link, color: AppColors.accent, size: 18),
             ),
-            child: const Icon(Icons.link, color: AppColors.accent, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.heading,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.heading,
+                    ),
                   ),
-                ),
-                Text(
-                  url,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: AppColors.accent,
+                  Text(
+                    url,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: AppColors.accent,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

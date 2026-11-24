@@ -72,8 +72,16 @@ Future<MenuPick?> showMessageMenu(
           ? _item(MsgAction.unpin, Icons.push_pin_outlined, 'Unpin')
           : _item(MsgAction.pin, Icons.push_pin_outlined, 'Pin'),
       m.isStarred
-          ? _item(MsgAction.unstar, Icons.star_rounded, 'Unstar')
-          : _item(MsgAction.star, Icons.star_outline_rounded, 'Star'),
+          ? _item(
+              MsgAction.unstar,
+              Icons.label_important_sharp,
+              'Unmark as important',
+            )
+          : _item(
+              MsgAction.star,
+              Icons.label_important_outline_sharp,
+              'Mark as important',
+            ),
       if (canEdit) _item(MsgAction.edit, Icons.edit_outlined, 'Edit'),
       if (canSave) _item(MsgAction.save, Icons.download_rounded, 'Download'),
       const PopupMenuDivider(height: 6),

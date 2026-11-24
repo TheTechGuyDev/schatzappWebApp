@@ -301,6 +301,31 @@ class ChatRepo extends ChangeNotifier {
     username: c.username,
   );
 
+  /// Locks or unlocks a chat for me (phone's set_private_lock RPC). A locked
+  /// chat moves to Private Chats.
+  Future<void> setPrivateLock(String conversationId, bool locked) async {
+    await _sb.rpc(
+      'set_private_lock',
+      params: {'p_conversation_id': conversationId, 'p_locked': locked},
+    );
+  }
+
+  /// My own lock state for a chat (phone's isMyPrivateLock).
+  Future<bool> isMyPrivateLock(String conversationId) async {
+    try {
+      final r = await _sb
+          .from('conversation_participants')
+          .select('private_lock')
+          .eq('conversation_id', conversationId)
+          .eq('user_id', uid!)
+          .isFilter('left_at', null)
+          .maybeSingle();
+      return r?['private_lock'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Checks the app password (same RPC as the mobile app).
   Future<bool> verifyAppPassword(String password) async {
     try {

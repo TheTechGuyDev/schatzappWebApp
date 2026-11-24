@@ -98,7 +98,7 @@ class WalletRepo extends ChangeNotifier {
           )
           .eq('user_id', me)
           .order('created_at', ascending: false)
-          .limit(100);
+          .limit(10);
       transactions = await _toTransactions(
         List<Map<String, dynamic>>.from(rows),
       );

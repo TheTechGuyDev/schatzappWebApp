@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../data/demo_data.dart';
+import '../../data/live/stories_repo.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/sunset_painter.dart';
 
@@ -59,7 +60,7 @@ class StoryHooks {
   onReply;
   final Future<void> Function(StoryItem item, String type)? onReact;
 
-  /// My reactions on a story (favorite / peace / thumbs).
+  /// My reactions on a story (favorite, peace, laugh, sad, angry).
   final Future<Set<String>> Function(StoryItem item)? reactions;
   final void Function(StoryItem item)? onViewers;
   final Future<void> Function(StoryItem item)? onDelete;
@@ -226,6 +227,10 @@ class _StoryPlayerState extends State<StoryPlayer>
   Future<void> _react(String type) async {
     final h = widget.hooks.onReact;
     final was = _mine.contains(type);
+    if (!was && _mine.length >= StoriesRepo.maxReactionsPerUser) {
+      _toast('You can pick up to 2 reactions. Tap one to remove it first.');
+      return;
+    }
     setState(() => was ? _mine.remove(type) : _mine.add(type));
     if (h == null) return;
     try {
@@ -508,19 +513,16 @@ class _StoryPlayerState extends State<StoryPlayer>
                           ),
                   ),
                   const SizedBox(width: 6),
-                  for (final (type, e) in const [
-                    ('favorite', '❤️'),
-                    ('peace', '✌️'),
-                    ('thumbs', '👍'),
-                  ])
+                  for (final MapEntry(key: type, value: e)
+                      in StoriesRepo.reactionEmoji.entries)
                     Padding(
                       padding: const EdgeInsets.only(left: 4),
                       child: InkWell(
                         customBorder: const CircleBorder(),
                         onTap: () => _react(type),
                         child: Container(
-                          width: 40,
-                          height: 40,
+                          width: 36,
+                          height: 36,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             color: _mine.contains(type)
@@ -528,7 +530,7 @@ class _StoryPlayerState extends State<StoryPlayer>
                                 : Colors.white.withValues(alpha: 0.25),
                             shape: BoxShape.circle,
                           ),
-                          child: Text(e, style: const TextStyle(fontSize: 21)),
+                          child: Text(e, style: const TextStyle(fontSize: 19)),
                         ),
                       ),
                     ),
