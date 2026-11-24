@@ -10,9 +10,9 @@ import '../../data/demo_data.dart';
 /// autoplay, so videos start muted and the user can turn sound on).
 final feedMuted = ValueNotifier<bool>(true);
 
-/// Photos/videos of one For You post. Portrait media shows as a 9:16 frame
-/// in the middle with a blurred copy filling the sides; landscape media fills
-/// the width. Several items become a swipeable carousel (arrows + dots).
+/// Photos/videos of one For You post. Portrait media shows in the middle
+/// with a blurred background filling the sides; landscape videos fill the
+/// whole box. Several items become a swipeable carousel (arrows + dots).
 /// Videos autoplay (muted) while the post is on screen and pause when it
 /// scrolls away.
 class PostMediaCarousel extends StatefulWidget {
@@ -20,7 +20,7 @@ class PostMediaCarousel extends StatefulWidget {
     super.key,
     required this.postId,
     required this.media,
-    this.height = 420,
+    this.height = 520,
   });
 
   final String postId;
@@ -268,27 +268,46 @@ class _VideoPageState extends State<_VideoPage> {
   @override
   Widget build(BuildContext context) {
     final playing = _ready && _c.value.isPlaying;
+    final landscape = _ready && _c.value.aspectRatio >= 1;
+    final size = _c.value.size;
     return Stack(
       fit: StackFit.expand,
       children: [
-        _BlurredBackground(asset: widget.media.thumb),
-        Center(
-          child: _ready
-              ? Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.white, width: 1.5),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(5),
-                    child: AspectRatio(
-                      aspectRatio: _c.value.aspectRatio,
-                      child: VideoPlayer(_c),
-                    ),
-                  ),
-                )
-              : const CircularProgressIndicator(color: Colors.white),
-        ),
+        if (!_ready)
+          _BlurredBackground(asset: widget.media.thumb)
+        else if (landscape)
+          // Landscape: fill the whole box (cropped evenly if needed).
+          ClipRect(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: size.width,
+                height: size.height,
+                child: VideoPlayer(_c),
+              ),
+            ),
+          )
+        else ...[
+          // Portrait: centred, blurred sides kept.
+          _BlurredBackground(asset: widget.media.thumb),
+          Center(
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.white, width: 1.5),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: AspectRatio(
+                  aspectRatio: _c.value.aspectRatio,
+                  child: VideoPlayer(_c),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (!_ready)
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
         // Tap to pause / play.
         Positioned.fill(
           child: GestureDetector(

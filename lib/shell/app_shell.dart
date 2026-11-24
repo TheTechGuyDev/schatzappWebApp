@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/demo_data.dart';
 import '../auth/web_auth.dart';
@@ -22,21 +23,31 @@ ScreenSize screenSizeOf(BuildContext context) {
 }
 
 class _NavItem {
-  const _NavItem(this.path, this.label, this.kind, [this.badge = 0]);
+  const _NavItem(this.path, this.label, this.kind);
 
   final String path;
   final String label;
   final NavIconKind kind;
-  final int badge;
+
+  /// Live count shown on the item. Only Chats has one: the number of chats
+  /// with unread messages (archived and locked chats are not counted, so a
+  /// Private chat never reveals itself through the badge).
+  int get badge {
+    if (path != '/chats') return 0;
+    final list = WebAuth.instance.isLive ? ChatRepo.instance.chats : demoChats;
+    return list.where((c) => c.unread > 0 && !c.isArchived).length;
+  }
 }
 
 const _navItems = [
-  _NavItem('/chats', 'Chats', NavIconKind.chats, 1),
+  _NavItem('/chats', 'Chats', NavIconKind.chats),
   _NavItem('/calls', 'Calls', NavIconKind.calls),
   _NavItem('/wallets', 'Wallets', NavIconKind.wallets),
   _NavItem('/stories', 'Stories', NavIconKind.stories),
-  _NavItem('/profile', 'Profile', NavIconKind.profile, 1),
+  _NavItem('/profile', 'Profile', NavIconKind.profile),
 ];
+
+const _railPrefKey = 'web_rail_collapsed';
 
 /// Signed-in layout: left nav rail on desktop (collapsible) and tablet
 /// (collapsed), bottom navigation on phone widths.
@@ -51,7 +62,8 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  bool _collapsed = false;
+  /// The user's own choice (remembered); null = default for the screen size.
+  bool? _collapsed;
 
   @override
   void initState() {
@@ -60,6 +72,18 @@ class _AppShellState extends State<AppShell> {
       ChatRepo.instance.start();
       CallService.instance.start();
     }
+    SharedPreferences.getInstance().then((p) {
+      if (mounted && p.containsKey(_railPrefKey)) {
+        setState(() => _collapsed = p.getBool(_railPrefKey));
+      }
+    });
+  }
+
+  void _toggle(bool current) {
+    setState(() => _collapsed = !current);
+    SharedPreferences.getInstance().then(
+      (p) => p.setBool(_railPrefKey, !current),
+    );
   }
 
   int get _index {
@@ -76,41 +100,44 @@ class _AppShellState extends State<AppShell> {
         child: Scaffold(
           backgroundColor: Colors.white,
           body: SafeArea(child: widget.child),
-          bottomNavigationBar: NavigationBar(
-            height: 66,
-            backgroundColor: Colors.white,
-            indicatorColor: AppColors.accentSoft,
-            selectedIndex: _index,
-            onDestinationSelected: (i) => context.go(_navItems[i].path),
-            destinations: [
-              for (final n in _navItems)
-                NavigationDestination(
-                  icon: Badge(
-                    isLabelVisible: n.badge > 0,
-                    label: Text('${n.badge}'),
-                    backgroundColor: AppColors.accent,
-                    child: NavIcon(n.kind, color: AppColors.body, size: 24),
-                  ),
-                  selectedIcon: Badge(
-                    isLabelVisible: n.badge > 0,
-                    label: Text('${n.badge}'),
-                    backgroundColor: AppColors.accent,
-                    child: NavIcon(
-                      n.kind,
-                      color: AppColors.accent,
-                      size: 24,
-                      active: true,
+          bottomNavigationBar: ListenableBuilder(
+            listenable: ChatRepo.instance,
+            builder: (context, _) => NavigationBar(
+              height: 66,
+              backgroundColor: Colors.white,
+              indicatorColor: AppColors.accentSoft,
+              selectedIndex: _index,
+              onDestinationSelected: (i) => context.go(_navItems[i].path),
+              destinations: [
+                for (final n in _navItems)
+                  NavigationDestination(
+                    icon: Badge(
+                      isLabelVisible: n.badge > 0,
+                      label: Text('${n.badge}'),
+                      backgroundColor: AppColors.accent,
+                      child: NavIcon(n.kind, color: AppColors.body, size: 24),
                     ),
+                    selectedIcon: Badge(
+                      isLabelVisible: n.badge > 0,
+                      label: Text('${n.badge}'),
+                      backgroundColor: AppColors.accent,
+                      child: NavIcon(
+                        n.kind,
+                        color: AppColors.accent,
+                        size: 24,
+                        active: true,
+                      ),
+                    ),
+                    label: n.label,
                   ),
-                  label: n.label,
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       );
     }
 
-    final collapsed = size == ScreenSize.tablet || _collapsed;
+    final collapsed = _collapsed ?? (size == ScreenSize.tablet);
     return CallLayer(
       child: Scaffold(
         backgroundColor: AppColors.railBg,
@@ -120,11 +147,14 @@ class _AppShellState extends State<AppShell> {
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOut,
               width: collapsed ? 84 : 244,
-              child: _Rail(
-                collapsed: collapsed,
-                selected: _index,
-                canToggle: size == ScreenSize.desktop,
-                onToggle: () => setState(() => _collapsed = !_collapsed),
+              child: ListenableBuilder(
+                listenable: ChatRepo.instance,
+                builder: (context, _) => _Rail(
+                  collapsed: collapsed,
+                  selected: _index,
+                  canToggle: true,
+                  onToggle: () => _toggle(collapsed),
+                ),
               ),
             ),
             Expanded(child: widget.child),
@@ -180,17 +210,33 @@ class _Rail extends StatelessWidget {
               Align(
                 alignment: collapsed ? Alignment.center : Alignment.centerRight,
                 child: Padding(
-                  padding: EdgeInsets.only(right: collapsed ? 0 : 6, top: 4),
-                  child: IconButton(
-                    tooltip: collapsed ? 'Expand menu' : 'Collapse menu',
-                    visualDensity: VisualDensity.compact,
-                    iconSize: 20,
-                    color: AppColors.meta,
-                    onPressed: onToggle,
-                    icon: Icon(
-                      collapsed
-                          ? Icons.keyboard_double_arrow_right_rounded
-                          : Icons.keyboard_double_arrow_left_rounded,
+                  padding: EdgeInsets.only(
+                    right: collapsed ? 0 : hPad,
+                    top: 8,
+                    bottom: 8,
+                  ),
+                  child: Tooltip(
+                    message: collapsed ? 'Expand menu' : 'Collapse menu',
+                    child: Material(
+                      color: Colors.white,
+                      shape: const CircleBorder(
+                        side: BorderSide(color: AppColors.border),
+                      ),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: onToggle,
+                        child: SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: Icon(
+                            collapsed
+                                ? Icons.keyboard_double_arrow_right_rounded
+                                : Icons.keyboard_double_arrow_left_rounded,
+                            size: 18,
+                            color: AppColors.accent,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
