@@ -28,6 +28,10 @@ class ChatsPage extends StatefulWidget {
 
   static const routePath = '/chats';
 
+  /// Set before going to /chats to open a one-to-one chat with this person
+  /// (used by the story viewers list).
+  static DemoContact? openWith;
+
   @override
   State<ChatsPage> createState() => _ChatsPageState();
 }
@@ -57,7 +61,15 @@ class _ChatsPageState extends State<ChatsPage> {
     if (_live) {
       _repo.addListener(_onData);
       _repo.start();
-      _loadLastChat();
+      final w = ChatsPage.openWith;
+      ChatsPage.openWith = null;
+      if (w != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _openWithContact(w);
+        });
+      } else {
+        _loadLastChat();
+      }
     }
   }
 
@@ -178,6 +190,17 @@ class _ChatsPageState extends State<ChatsPage> {
     SharedPreferences.getInstance().then((p) {
       id == null ? p.remove(_lastChatKey) : p.setString(_lastChatKey, id);
     });
+  }
+
+  /// Pin or unpin a chat (max 4, newest pin on top, like the phone).
+  Future<void> _pinChat(DemoChat c, bool pin) async {
+    if (!_live) {
+      _toast('Sign in with your phone to pin chats.');
+      return;
+    }
+    final err = await _repo.setPinned(c.id, pin);
+    if (!mounted) return;
+    _toast(err ?? (pin ? 'Chat pinned' : 'Chat unpinned'));
   }
 
   void _open(DemoChat c) {
@@ -517,6 +540,36 @@ class _ChatsPageState extends State<ChatsPage> {
     }
   });
 
+  /// Opens (or starts) my one-to-one chat with a live contact.
+  Future<void> _openWithContact(DemoContact contact) async {
+    final uid = contact.userId;
+    if (uid == null) return;
+    await _guard(() async {
+      final id = await _repo.directConversationWith(uid);
+      await _repo.refresh();
+      if (!mounted) return;
+      final all = [..._repo.chats, ..._repo.lockedChats];
+      final c = all.where((x) => x.id == id).firstOrNull;
+      if (c != null && c.isLocked && !_privateMode) {
+        _toast('This chat is in Private Chats.');
+        return;
+      }
+      _open(
+        c ??
+            DemoChat(
+              id: id,
+              name: contact.name,
+              preview: '',
+              time: '',
+              avatarUrl: contact.avatarUrl,
+              otherUserId: uid,
+              phone: contact.phone,
+            ),
+      );
+      if (c == null) _pendingChats[id] = contact;
+    }, 'Could not start the chat. Try again.');
+  }
+
   Future<void> _newUser() async {
     final picked = await showDialog<List<DemoContact>>(
       context: context,
@@ -528,32 +581,7 @@ class _ChatsPageState extends State<ChatsPage> {
     if (picked == null || picked.isEmpty || !mounted) return;
     final contact = picked.first;
     if (_live) {
-      final uid = contact.userId;
-      if (uid == null) return;
-      await _guard(() async {
-        final id = await _repo.directConversationWith(uid);
-        await _repo.refresh();
-        if (!mounted) return;
-        final all = [..._repo.chats, ..._repo.lockedChats];
-        final c = all.where((x) => x.id == id).firstOrNull;
-        if (c != null && c.isLocked && !_privateMode) {
-          _toast('This chat is in Private Chats.');
-          return;
-        }
-        _open(
-          c ??
-              DemoChat(
-                id: id,
-                name: contact.name,
-                preview: '',
-                time: '',
-                avatarUrl: contact.avatarUrl,
-                otherUserId: uid,
-                phone: contact.phone,
-              ),
-        );
-        if (c == null) _pendingChats[id] = contact;
-      }, 'Could not start the chat. Try again.');
+      await _openWithContact(contact);
       return;
     }
     final target = _privateMode ? _privateChats : _chats;
@@ -731,6 +759,7 @@ class _ChatsPageState extends State<ChatsPage> {
       onFilter: (f) => setState(() => _filter = f),
       onSearch: (q) => setState(() => _query = q),
       onOpen: _open,
+      onPin: _pinChat,
       onOpenPrivate: _openPrivate,
       onClosePrivate: _closePrivate,
       onNewUser: _newUser,
@@ -876,6 +905,7 @@ class _ChatListPanel extends StatelessWidget {
     required this.onFilter,
     required this.onSearch,
     required this.onOpen,
+    required this.onPin,
     required this.onOpenPrivate,
     required this.onClosePrivate,
     required this.onNewUser,
@@ -899,6 +929,7 @@ class _ChatListPanel extends StatelessWidget {
   final ValueChanged<ChatFilter> onFilter;
   final ValueChanged<String> onSearch;
   final ValueChanged<DemoChat> onOpen;
+  final void Function(DemoChat chat, bool pin) onPin;
   final VoidCallback onOpenPrivate;
   final VoidCallback onClosePrivate;
   final VoidCallback onNewUser;
@@ -1028,6 +1059,7 @@ class _ChatListPanel extends StatelessWidget {
                       unread: unreadOf(chats[i]),
                       selected: chats[i].id == selectedId,
                       onTap: () => onOpen(chats[i]),
+                      onPin: (pin) => onPin(chats[i], pin),
                     ),
                   ),
           ),
@@ -1177,120 +1209,212 @@ class _NewChatButton extends StatelessWidget {
   }
 }
 
-class _ChatTile extends StatelessWidget {
+class _ChatTile extends StatefulWidget {
   const _ChatTile({
     required this.chat,
     required this.unread,
     required this.selected,
     required this.onTap,
+    required this.onPin,
   });
 
   final DemoChat chat;
   final int unread;
   final bool selected;
   final VoidCallback onTap;
+  final ValueChanged<bool> onPin;
+
+  @override
+  State<_ChatTile> createState() => _ChatTileState();
+}
+
+class _ChatTileState extends State<_ChatTile> {
+  bool _hover = false;
+
+  /// Chat menu (right-click, long-press or the hover arrow): Pin / Unpin.
+  Future<void> _menu(Offset globalPos) async {
+    final overlay =
+        Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+    final local = overlay.globalToLocal(globalPos);
+    final pinned = widget.chat.isPinned;
+    final v = await showMenu<int>(
+      context: context,
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      position: RelativeRect.fromRect(
+        local & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 1,
+          child: Row(
+            children: [
+              Icon(
+                pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                size: 20,
+                color: AppColors.heading,
+              ),
+              const SizedBox(width: 12),
+              Text(pinned ? 'Unpin chat' : 'Pin chat'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (v == 1) widget.onPin(!pinned);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final chat = widget.chat;
+    final unread = widget.unread;
     final hasUnread = unread > 0;
+    const pin = Icon(Icons.push_pin, size: 15, color: Colors.black45);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Material(
-        color: selected ? const Color(0xFFF1E6FE) : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            child: Row(
-              children: [
-                Avatar(
-                  name: chat.name,
-                  color: chat.avatarColor,
-                  photoUrl: chat.avatarUrl,
-                  isGroup: chat.isGroup,
-                  isOnline: chat.isOnline,
-                  size: 54,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onSecondaryTapDown: (d) => _menu(d.globalPosition),
+          onLongPressStart: (d) => _menu(d.globalPosition),
+          child: Material(
+            color: widget.selected
+                ? const Color(0xFFF1E6FE)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: widget.onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        chat.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.heading,
-                        ),
-                      ),
-                      if (chat.preview.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            if (chat.previewIsPhoto) ...[
-                              const Icon(
-                                Icons.photo_outlined,
-                                size: 16,
-                                color: AppColors.meta,
-                              ),
-                              const SizedBox(width: 6),
-                            ],
-                            Expanded(
-                              child: Text(
-                                chat.preview,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: AppColors.meta,
+                child: Row(
+                  children: [
+                    Avatar(
+                      name: chat.name,
+                      color: chat.avatarColor,
+                      photoUrl: chat.avatarUrl,
+                      isGroup: chat.isGroup,
+                      isOnline: chat.isOnline,
+                      size: 54,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            chat.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.heading,
+                            ),
+                          ),
+                          if (chat.preview.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                if (chat.previewIsPhoto) ...[
+                                  const Icon(
+                                    Icons.photo_outlined,
+                                    size: 16,
+                                    color: AppColors.meta,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    chat.preview,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: AppColors.meta,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
                           ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      chat.time,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: hasUnread
-                            ? FontWeight.w600
-                            : FontWeight.w400,
-                        color: hasUnread ? AppColors.accent : AppColors.meta,
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    if (hasUnread)
-                      CountBadge(unread, size: 22)
-                    else if (chat.marker == ChatMarker.activeStatus)
-                      const Icon(
-                        Icons.radio_button_checked,
-                        size: 20,
-                        color: AppColors.accent,
-                      )
-                    else if (chat.marker == ChatMarker.seenStatus)
-                      const Icon(
-                        Icons.radio_button_checked,
-                        size: 20,
-                        color: AppColors.meta,
-                      )
-                    else
-                      const SizedBox(height: 20),
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          chat.time,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: hasUnread
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: hasUnread
+                                ? AppColors.accent
+                                : AppColors.meta,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 22,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (chat.isPinned) ...[
+                                pin,
+                                const SizedBox(width: 6),
+                              ],
+                              if (hasUnread)
+                                CountBadge(unread, size: 22)
+                              else if (chat.marker == ChatMarker.activeStatus)
+                                const Icon(
+                                  Icons.radio_button_checked,
+                                  size: 20,
+                                  color: AppColors.accent,
+                                )
+                              else if (chat.marker == ChatMarker.seenStatus)
+                                const Icon(
+                                  Icons.radio_button_checked,
+                                  size: 20,
+                                  color: AppColors.meta,
+                                ),
+                              if (_hover)
+                                Builder(
+                                  builder: (bctx) => InkWell(
+                                    borderRadius: BorderRadius.circular(11),
+                                    onTap: () {
+                                      final box =
+                                          bctx.findRenderObject() as RenderBox;
+                                      _menu(
+                                        box.localToGlobal(
+                                          Offset(0, box.size.height),
+                                        ),
+                                      );
+                                    },
+                                    child: const Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      size: 22,
+                                      color: AppColors.meta,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

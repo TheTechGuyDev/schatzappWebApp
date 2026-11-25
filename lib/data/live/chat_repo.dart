@@ -93,6 +93,35 @@ class ChatRepo extends ChangeNotifier {
             .order('last_message_at', ascending: false),
       );
 
+      // Pinned chats stay in pin order (newest pin on top, like WhatsApp);
+      // a new message never moves them. Others follow by latest message.
+      final pinnedAt = <String, DateTime>{};
+      try {
+        final pr = await _sb
+            .from('conversation_participants')
+            .select('conversation_id, pinned_at')
+            .eq('user_id', me)
+            .eq('is_pinned', true);
+        for (final r in pr) {
+          final at = DateTime.tryParse('${r['pinned_at'] ?? ''}');
+          if (at != null) pinnedAt['${r['conversation_id']}'] = at;
+        }
+      } catch (_) {}
+      final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+      DateTime lastOf(Map<String, dynamic> r) =>
+          DateTime.tryParse('${r['last_message_at'] ?? ''}') ?? epoch;
+      rows.sort((a, b) {
+        final ap = a['is_pinned'] == true, bp = b['is_pinned'] == true;
+        if (ap != bp) return ap ? -1 : 1;
+        if (ap) {
+          final c = (pinnedAt['${b['conversation_id']}'] ?? epoch).compareTo(
+            pinnedAt['${a['conversation_id']}'] ?? epoch,
+          );
+          if (c != 0) return c;
+        }
+        return lastOf(b).compareTo(lastOf(a));
+      });
+
       final otherIds = rows
           .where((r) => r['type'] != 'group')
           .map((r) => r['other_user_id'] as String?)
@@ -462,6 +491,32 @@ class ChatRepo extends ChangeNotifier {
       for (final u in userIds)
         {'conversation_id': conversationId, 'user_id': u, 'role': 'member'},
     ]);
+  }
+
+  /// Most chats a user can pin (same as the phone).
+  static const maxPinned = 4;
+
+  /// Pins or unpins a chat for me. pinned_at is set by a database trigger.
+  /// Returns an error message, or null when done.
+  Future<String?> setPinned(String conversationId, bool pin) async {
+    final me = uid;
+    if (me == null) return 'Not signed in';
+    if (pin) {
+      final all = [...chats, ...lockedChats];
+      final count = all.where((c) => c.isPinned).length;
+      if (count >= maxPinned) return 'You can only pin up to $maxPinned chats';
+    }
+    try {
+      await _sb
+          .from('conversation_participants')
+          .update({'is_pinned': pin})
+          .eq('conversation_id', conversationId)
+          .eq('user_id', me);
+      await refresh();
+      return null;
+    } catch (_) {
+      return pin ? 'Could not pin this chat' : 'Could not unpin this chat';
+    }
   }
 
   Future<void> setMuted(String conversationId, bool muted) async {

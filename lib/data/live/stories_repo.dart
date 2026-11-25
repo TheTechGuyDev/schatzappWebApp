@@ -29,11 +29,26 @@ class StorySettings {
 
 /// Someone who viewed one of my stories.
 class StoryViewer {
-  const StoryViewer(this.name, this.avatarUrl, this.at);
+  const StoryViewer(
+    this.name,
+    this.avatarUrl,
+    this.at, {
+    this.userId = '',
+    this.reactions = const [],
+    this.requestId,
+  });
 
   final String name;
   final String? avatarUrl;
   final DateTime? at;
+  final String userId;
+
+  /// Their reactions on this story (max 2), in the app's order.
+  final List<String> reactions;
+
+  /// A request they sent me that I haven't answered (they can't message me
+  /// yet), or null.
+  final String? requestId;
 }
 
 /// Reactions on a story: counts and mine (favorite, peace, laugh, sad,
@@ -508,28 +523,50 @@ class StoriesRepo {
     return StoryReactions(counts, mine);
   }
 
+  /// A reaction can't be removed or changed after this long (also enforced
+  /// by a database trigger).
+  static const reactionLockAfter = Duration(seconds: 3);
+
+  /// Adds or removes my reaction. Throws [ReactionLockedException] when the
+  /// reaction is older than 3 seconds, [ReactionLimitException] at 2.
   Future<void> toggleReaction(String statusId, String type) async {
     // 'laugh' replaced the old 'thumbs', so both are treated as one.
     final same = type == 'laugh' ? ['laugh', 'thumbs'] : [type];
-    final existing = await _sb
-        .from('status_reactions')
-        .select('id')
-        .eq('status_id', statusId)
-        .eq('user_id', _me)
-        .inFilter('reaction_type', same);
-    if ((existing as List).isNotEmpty) {
+    final existing = List<Map<String, dynamic>>.from(
       await _sb
           .from('status_reactions')
-          .delete()
+          .select('id, created_at')
           .eq('status_id', statusId)
           .eq('user_id', _me)
-          .inFilter('reaction_type', same);
-    } else {
-      await _sb.from('status_reactions').insert({
-        'status_id': statusId,
-        'user_id': _me,
-        'reaction_type': type,
-      });
+          .inFilter('reaction_type', same),
+    );
+    try {
+      if (existing.isNotEmpty) {
+        final now = DateTime.now().toUtc();
+        for (final r in existing) {
+          final at = DateTime.tryParse('${r['created_at'] ?? ''}')?.toUtc();
+          if (at == null || now.difference(at) > reactionLockAfter) {
+            throw const ReactionLockedException();
+          }
+        }
+        await _sb
+            .from('status_reactions')
+            .delete()
+            .eq('status_id', statusId)
+            .eq('user_id', _me)
+            .inFilter('reaction_type', same);
+      } else {
+        await _sb.from('status_reactions').insert({
+          'status_id': statusId,
+          'user_id': _me,
+          'reaction_type': type,
+        });
+      }
+    } on PostgrestException catch (e) {
+      final m = e.message.toLowerCase();
+      if (m.contains('3 seconds')) throw const ReactionLockedException();
+      if (m.contains('up to 2')) throw const ReactionLimitException();
+      rethrow;
     }
   }
 
@@ -550,20 +587,71 @@ class StoriesRepo {
     });
   }
 
+  /// People who viewed my story, with their reactions and any pending
+  /// request (same as the phone's viewers list).
   Future<List<StoryViewer>> viewers(String statusId) async {
     final rows = await _sb
         .from('status_views')
         .select('viewer_id, viewed_at, profiles(full_name, avatar_url)')
         .eq('status_id', statusId)
         .order('viewed_at', ascending: false);
+    final ids = [
+      for (final r in rows)
+        if (r['viewer_id'] != null) '${r['viewer_id']}',
+    ];
+
+    final reacts = <String, Set<String>>{};
+    final requests = <String, String>{};
+    if (ids.isNotEmpty) {
+      try {
+        final rr = await _sb
+            .from('status_reactions')
+            .select('user_id, reaction_type')
+            .eq('status_id', statusId)
+            .inFilter('user_id', ids);
+        for (final r in rr) {
+          var t = '${r['reaction_type']}';
+          if (t == 'thumbs') t = 'laugh';
+          reacts.putIfAbsent('${r['user_id']}', () => {}).add(t);
+        }
+      } catch (_) {}
+      try {
+        final nr = await _sb
+            .from('notifications')
+            .select('id, from_user_id')
+            .eq('user_id', _me)
+            .eq('status', 'pending')
+            .inFilter('type', ['friend_request', 'message_request'])
+            .inFilter('from_user_id', ids)
+            .order('created_at', ascending: false);
+        for (final r in nr) {
+          requests.putIfAbsent('${r['from_user_id']}', () => '${r['id']}');
+        }
+      } catch (_) {}
+    }
+
     return [
       for (final r in rows)
         StoryViewer(
           '${(r['profiles'] as Map?)?['full_name'] ?? 'SchatzApp user'}',
           (r['profiles'] as Map?)?['avatar_url'] as String?,
           DateTime.tryParse('${r['viewed_at'] ?? ''}')?.toLocal(),
+          userId: '${r['viewer_id'] ?? ''}',
+          reactions: [
+            for (final t in reactionTypes)
+              if (reacts['${r['viewer_id']}']?.contains(t) ?? false) t,
+          ],
+          requestId: requests['${r['viewer_id']}'],
         ),
     ];
+  }
+
+  /// Accept or decline a pending request (phone's respond_notification).
+  Future<void> respondRequest(String notificationId, bool accept) async {
+    await _sb.rpc(
+      'respond_notification',
+      params: {'p_id': notificationId, 'p_accept': accept},
+    );
   }
 
   Future<void> delete(String statusId) async {
@@ -741,4 +829,20 @@ class StoriesRepo {
       for (final id in ids) {'owner_id': _me, 'viewer_id': id},
     ]);
   }
+}
+
+/// The reaction is older than 3 seconds, so it can't be removed.
+class ReactionLockedException implements Exception {
+  const ReactionLockedException();
+  static const message = "Reactions can't be changed after 3 seconds";
+  @override
+  String toString() => message;
+}
+
+/// The user already has 2 reactions on this post.
+class ReactionLimitException implements Exception {
+  const ReactionLimitException();
+  static const message = 'You can pick up to 2 reactions on a post';
+  @override
+  String toString() => message;
 }

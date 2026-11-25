@@ -1,3 +1,4 @@
+import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../auth/web_auth.dart';
@@ -7,6 +8,7 @@ import '../../data/live/stories_repo.dart';
 import '../../platform/camera_dialog.dart';
 import '../../platform/web_files.dart';
 import '../chats/chat_dialogs.dart';
+import '../chats/chats_page.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
@@ -134,28 +136,29 @@ class _StoriesPageState extends State<StoriesPage> {
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
                 children: [
                   for (final v in list)
-                    ListTile(
-                      leading: Avatar(
-                        name: v.name,
-                        photoUrl: v.avatarUrl,
-                        size: 42,
-                      ),
-                      title: Text(
-                        v.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.heading,
-                        ),
-                      ),
-                      subtitle: Text(
-                        StoriesRepo.timeAgo(v.at),
-                        style: const TextStyle(color: AppColors.meta),
-                      ),
+                    _ViewerRow(
+                      viewer: v,
+                      onMessage: () {
+                        // Close this list and the story player (phone size).
+                        Navigator.of(
+                          context,
+                          rootNavigator: true,
+                        ).popUntil((r) => r is! PopupRoute);
+                        _messageViewer(v);
+                      },
                     ),
                 ],
               ),
       ),
     );
+  }
+
+  /// Opens my chat with someone who viewed my story.
+  void _messageViewer(StoryViewer v) {
+    if (v.userId.isEmpty) return;
+    _stop();
+    ChatsPage.openWith = DemoContact(v.name, '', null, v.userId, v.avatarUrl);
+    context.go(ChatsPage.routePath);
   }
 
   void _play(List<DemoStory> list, int index, {bool mine = false}) {
@@ -854,12 +857,24 @@ class _FeedPostState extends State<_FeedPost> {
     }
   }
 
+  /// When each reaction was added in this session (preview lock check).
+  final Map<int, DateTime> _addedAt = {};
+
   Future<void> _react(int r) async {
     final was = _mineSet.contains(r);
     if (!was && _mineSet.length >= StoriesRepo.maxReactionsPerUser) {
-      _toast('You can pick up to 2 reactions. Tap one to remove it first.');
+      _toast(ReactionLimitException.message);
       return;
     }
+    if (was && !widget.live) {
+      final at = _addedAt[r];
+      if (at == null ||
+          DateTime.now().difference(at) > StoriesRepo.reactionLockAfter) {
+        _toast(ReactionLockedException.message);
+        return;
+      }
+    }
+    if (!was) _addedAt[r] = DateTime.now();
     setState(() {
       was ? _mineSet.remove(r) : _mineSet.add(r);
       _counts[r] += was ? -1 : 1;
@@ -868,8 +883,11 @@ class _FeedPostState extends State<_FeedPost> {
     if (!widget.live || id == null) return;
     try {
       await StoriesRepo.instance.toggleReaction(id, _types[r]);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      if (e is ReactionLockedException || e is ReactionLimitException) {
+        _toast('$e');
+      }
       setState(() {
         was ? _mineSet.add(r) : _mineSet.remove(r);
         _counts[r] += was ? 1 : -1;
@@ -1968,6 +1986,151 @@ class _AddStoryDialogState extends State<_AddStoryDialog> {
             ),
           ),
           trailing,
+        ],
+      ),
+    );
+  }
+}
+
+/// A row in "Viewed by": their reactions, then "..." (Accept / Decline) when
+/// they sent me a request I haven't answered, or a message icon.
+class _ViewerRow extends StatefulWidget {
+  const _ViewerRow({required this.viewer, required this.onMessage});
+
+  final StoryViewer viewer;
+  final VoidCallback onMessage;
+
+  @override
+  State<_ViewerRow> createState() => _ViewerRowState();
+}
+
+class _ViewerRowState extends State<_ViewerRow> {
+  late String? _requestId = widget.viewer.requestId;
+  bool _declined = false;
+  bool _busy = false;
+
+  Future<void> _respond(bool accept) async {
+    final id = _requestId;
+    if (id == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await StoriesRepo.instance.respondRequest(id, accept);
+      _toast(
+        accept
+            ? "Accepted. You can now see each other's stories and message."
+            : 'Declined',
+      );
+      _requestId = null;
+      _declined = !accept;
+    } catch (_) {
+      _toast('Could not complete that. Try again.');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  void _toast(String t) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(t)));
+  }
+
+  Widget _emoji(String type) {
+    if (type == 'favorite') {
+      return const Icon(Icons.favorite, color: Color(0xFFE0245E), size: 22);
+    }
+    return Text(
+      StoriesRepo.reactionEmoji[type] ?? '',
+      style: const TextStyle(fontSize: 19, height: 1.1),
+    );
+  }
+
+  Widget _action() {
+    if (_busy) {
+      return const SizedBox(
+        width: 40,
+        height: 40,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.accent,
+            ),
+          ),
+        ),
+      );
+    }
+    if (_declined) return const SizedBox(width: 40, height: 40);
+    if (_requestId != null) {
+      return SizedBox(
+        width: 40,
+        height: 40,
+        child: PopupMenuButton<String>(
+          padding: EdgeInsets.zero,
+          tooltip: 'Message request',
+          color: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          icon: const Icon(Icons.more_horiz, color: Colors.black87, size: 26),
+          onSelected: (v) => _respond(v == 'accept'),
+          itemBuilder: (_) => const [
+            PopupMenuItem<String>(value: 'accept', child: Text('Accept')),
+            PopupMenuItem<String>(value: 'decline', child: Text('Decline')),
+          ],
+        ),
+      );
+    }
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        tooltip: 'Message',
+        onPressed: widget.onMessage,
+        icon: const Icon(
+          Icons.chat_bubble_outline_rounded,
+          color: Color(0xFF111B21),
+          size: 25,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = widget.viewer;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        children: [
+          Avatar(name: v.name, photoUrl: v.avatarUrl, size: 42),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  v.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.heading,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  StoriesRepo.timeAgo(v.at),
+                  style: const TextStyle(color: AppColors.meta, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          for (final t in v.reactions)
+            Padding(padding: const EdgeInsets.only(right: 6), child: _emoji(t)),
+          if (v.reactions.isNotEmpty) const SizedBox(width: 6),
+          _action(),
         ],
       ),
     );

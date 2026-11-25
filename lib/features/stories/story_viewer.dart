@@ -224,18 +224,34 @@ class _StoryPlayerState extends State<StoryPlayer>
     }
   }
 
+  /// When each reaction was added in this session (preview lock check).
+  final Map<String, DateTime> _addedAt = {};
+
   Future<void> _react(String type) async {
     final h = widget.hooks.onReact;
     final was = _mine.contains(type);
     if (!was && _mine.length >= StoriesRepo.maxReactionsPerUser) {
-      _toast('You can pick up to 2 reactions. Tap one to remove it first.');
+      _toast(ReactionLimitException.message);
       return;
     }
+    final key = '${_current.id}|$type';
+    if (was && h == null) {
+      final at = _addedAt[key];
+      if (at == null ||
+          DateTime.now().difference(at) > StoriesRepo.reactionLockAfter) {
+        _toast(ReactionLockedException.message);
+        return;
+      }
+    }
+    if (!was) _addedAt[key] = DateTime.now();
     setState(() => was ? _mine.remove(type) : _mine.add(type));
     if (h == null) return;
     try {
       await h(_current, type);
-    } catch (_) {
+    } catch (e) {
+      if (e is ReactionLockedException || e is ReactionLimitException) {
+        _toast('$e');
+      }
       if (mounted) {
         setState(() => was ? _mine.add(type) : _mine.remove(type));
       }
