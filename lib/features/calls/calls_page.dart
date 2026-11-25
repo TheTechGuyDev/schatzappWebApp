@@ -117,7 +117,7 @@ class _CallsPageState extends State<CallsPage> {
       context: context,
       builder: (_) => ContactPickerDialog(
         title: 'New call',
-        load: _live ? ChatRepo.instance.contacts : null,
+        load: _live ? ChatRepo.instance.normalContacts : null,
       ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;

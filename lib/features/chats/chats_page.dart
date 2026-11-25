@@ -13,6 +13,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/resizable_width.dart';
 import '../../widgets/brand_logo.dart';
+import '../../widgets/privacy_guard.dart';
 import '../calls/call_screen.dart';
 import 'chat_dialogs.dart';
 import 'composer.dart';
@@ -47,6 +48,33 @@ class _ChatsPageState extends State<ChatsPage> {
   ChatRepo get _repo => ChatRepo.instance;
   List<DemoChat> get _chats => _live ? _repo.chats : _demoChats;
   List<DemoChat> get _privateChats => _live ? _repo.lockedChats : _demoPrivate;
+
+  /// Private Chat Lock rules per chat (someone locked it, or a private
+  /// group): no calls (Bimp only), pictures and videos only, screen guard.
+  final Map<String, bool> _restricted = {};
+  final Set<String> _restrictedLoading = {};
+
+  bool _isRestricted(DemoChat c) {
+    if (c.isLocked || _privateChats.any((x) => x.id == c.id)) return true;
+    final known = _restricted[c.id];
+    if (known != null) return known;
+    if (_live && _restrictedLoading.add(c.id)) {
+      _repo.isRestricted(c.id).then((v) {
+        _restrictedLoading.remove(c.id);
+        if (mounted) setState(() => _restricted[c.id] = v);
+      });
+    }
+    return false;
+  }
+
+  Future<void> _bimp(DemoChat chat) async {
+    if (!_live) {
+      _toast('Bimp sent');
+      return;
+    }
+    final err = await CallService.instance.sendBimp(chat);
+    if (mounted) _toast(err ?? 'Bimp sent');
+  }
 
   /// Live messages of the open chat.
   ConversationFeed? _feed;
@@ -289,7 +317,7 @@ class _ChatsPageState extends State<ChatsPage> {
     final t = await showDialog<ForwardTargets>(
       context: context,
       builder: (_) =>
-          ForwardDialog(chats: _repo.chats, loadContacts: _repo.contacts),
+          ForwardDialog(chats: _repo.chats, loadContacts: _repo.normalContacts),
     );
     if (t == null || !mounted) return;
     await _guard(() async {
@@ -481,6 +509,7 @@ class _ChatsPageState extends State<ChatsPage> {
       items: items,
       start: start,
       actions: _viewerActions(chat),
+      protected: _isRestricted(chat),
     );
   }
 
@@ -514,6 +543,7 @@ class _ChatsPageState extends State<ChatsPage> {
   /// Lock Chat in the info panel: a locked chat moves to Private Chats (the
   /// password was just checked), an unlocked one goes back to the list.
   Future<void> _lockChanged(DemoChat chat, bool locked) async {
+    _restricted.remove(chat.id);
     if (_live) {
       await _repo.refresh();
     } else {
@@ -575,7 +605,9 @@ class _ChatsPageState extends State<ChatsPage> {
       context: context,
       builder: (_) => ContactPickerDialog(
         title: _privateMode ? 'New private chat' : 'New chat',
-        load: _live ? _repo.contacts : null,
+        load: _live
+            ? (_privateMode ? _repo.contacts : _repo.normalContacts)
+            : null,
       ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;
@@ -609,7 +641,9 @@ class _ChatsPageState extends State<ChatsPage> {
       context: context,
       builder: (_) => CreateGroupDialog(
         privateGroup: _privateMode,
-        load: _live ? _repo.contacts : null,
+        load: _live
+            ? (_privateMode ? _repo.contacts : _repo.normalContacts)
+            : null,
       ),
     );
     if (g == null || !mounted) return;
@@ -664,7 +698,9 @@ class _ChatsPageState extends State<ChatsPage> {
         title: 'Add Members To Group',
         multiSelect: true,
         exclude: _live ? exclude : chat.members.toSet(),
-        load: _live ? _repo.contacts : null,
+        load: _live
+            ? (_privateMode ? _repo.contacts : _repo.normalContacts)
+            : null,
       ),
     );
     if (picked == null || picked.isEmpty || !mounted) return;
@@ -713,6 +749,10 @@ class _ChatsPageState extends State<ChatsPage> {
   }
 
   void _call(DemoChat chat, bool video) {
+    if (_isRestricted(chat)) {
+      _toast('Calls are disabled in a Private Chat Lock chat');
+      return;
+    }
     if (_live) {
       CallService.instance.call(chat, video: video).then((err) {
         if (err != null && mounted) _toast(err);
@@ -774,6 +814,8 @@ class _ChatsPageState extends State<ChatsPage> {
         : _ConversationPane(
             key: ValueKey(chat.id),
             chat: chat,
+            restricted: _isRestricted(chat),
+            onBimp: () => _bimp(chat),
             theme: _themeOf(chat),
             wallpaperUrl: _wallpapers[chat.id],
             typingText: _live ? _typingText(chat) : null,
@@ -811,7 +853,10 @@ class _ChatsPageState extends State<ChatsPage> {
                 ? () => setState(() => _selectedId = null)
                 : null,
           );
-    final info = (chat != null && _infoOpen)
+    final guarded = chat == null
+        ? conversation
+        : PrivacyGuard(enabled: _isRestricted(chat), child: conversation);
+    final rawInfo = (chat != null && _infoOpen)
         ? ContactInfoPanel(
             key: ValueKey('info-${chat.id}-$_infoVersion'),
             chat: chat,
@@ -836,9 +881,12 @@ class _ChatsPageState extends State<ChatsPage> {
             },
           )
         : null;
+    final info = rawInfo == null
+        ? null
+        : PrivacyGuard(enabled: _isRestricted(chat!), child: rawInfo);
 
     if (size == ScreenSize.phone) {
-      return info ?? (chat == null ? list : conversation);
+      return info ?? (chat == null ? list : guarded);
     }
 
     const gap = 12.0;
@@ -871,9 +919,9 @@ class _ChatsPageState extends State<ChatsPage> {
                     setState(() => _listWidth.set(_listWidth.initial)),
               ),
               if (info == null)
-                Expanded(child: ShellPanel(child: conversation))
+                Expanded(child: ShellPanel(child: guarded))
               else if (threeColumns) ...[
-                Expanded(child: ShellPanel(child: conversation)),
+                Expanded(child: ShellPanel(child: guarded)),
                 const SizedBox(width: gap),
                 SizedBox(
                   width: infoWidth,
@@ -1481,7 +1529,13 @@ class _ConversationPane extends StatefulWidget {
     this.onCancelReply,
     this.actions = const BubbleActions(),
     this.onClearChat,
+    this.restricted = false,
+    this.onBimp,
   });
+
+  /// Private Chat Lock rules apply to this chat.
+  final bool restricted;
+  final VoidCallback? onBimp;
 
   final VoidCallback? onClearChat;
   final ConversationFeed? feed;
@@ -1599,6 +1653,8 @@ class _ConversationPaneState extends State<_ConversationPane> {
       children: [
         _ConversationHeader(
           chat: chat,
+          restricted: widget.restricted,
+          onBimp: widget.onBimp,
           typingText: widget.typingText,
           onBack: widget.onBack,
           onOpenInfo: widget.onOpenInfo,
@@ -1675,6 +1731,7 @@ class _ConversationPaneState extends State<_ConversationPane> {
           ),
         ),
         ChatComposer(
+          restricted: widget.restricted,
           onSend: widget.onSend,
           onTyping: widget.onTyping,
           feed: widget.feed,
@@ -1765,6 +1822,8 @@ class _PinnedBar extends StatelessWidget {
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.chat,
+    this.restricted = false,
+    this.onBimp,
     this.typingText,
     required this.onOpenInfo,
     required this.onCall,
@@ -1776,6 +1835,10 @@ class _ConversationHeader extends StatelessWidget {
 
   final VoidCallback? onClearChat;
   final DemoChat chat;
+
+  /// Private Chat Lock: no voice/video buttons, a Bimp button instead.
+  final bool restricted;
+  final VoidCallback? onBimp;
   final String? typingText;
   final VoidCallback onOpenInfo;
   final ValueChanged<bool> onCall;
@@ -1883,18 +1946,27 @@ class _ConversationHeader extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
-            tooltip: 'Video call',
-            onPressed: () => onCall(true),
-            icon: const Icon(Icons.videocam_outlined, size: 27),
-            color: AppColors.body,
-          ),
-          IconButton(
-            tooltip: 'Voice call',
-            onPressed: () => onCall(false),
-            icon: const Icon(Icons.call_outlined, size: 25),
-            color: AppColors.body,
-          ),
+          if (restricted)
+            IconButton(
+              tooltip: 'Bimp',
+              onPressed: onBimp,
+              icon: const Icon(Icons.notifications_none_rounded, size: 26),
+              color: AppColors.body,
+            )
+          else ...[
+            IconButton(
+              tooltip: 'Video call',
+              onPressed: () => onCall(true),
+              icon: const Icon(Icons.videocam_outlined, size: 27),
+              color: AppColors.body,
+            ),
+            IconButton(
+              tooltip: 'Voice call',
+              onPressed: () => onCall(false),
+              icon: const Icon(Icons.call_outlined, size: 25),
+              color: AppColors.body,
+            ),
+          ],
           IconButton(
             tooltip: 'Search',
             onPressed: () => soon('Search in chat'),

@@ -913,6 +913,14 @@ class _CallInfo {
 
   static _CallInfo parse(String raw, bool mine) {
     final parts = raw.toLowerCase().split(':');
+    if (parts.first.trim() == 'bimp') {
+      return _CallInfo(
+        'Bimp',
+        mine ? 'Bimp sent' : 'Bimped',
+        Icons.notifications_active_outlined,
+        false,
+      );
+    }
     final video = parts.first.contains('video');
     final state = parts.length > 1 ? parts[1].trim() : '';
     final title = video ? 'Video call' : 'Voice call';

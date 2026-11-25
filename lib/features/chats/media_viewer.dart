@@ -5,6 +5,7 @@ import 'package:web/web.dart' as web;
 import '../../data/demo_data.dart';
 import '../../platform/web_files.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/privacy_guard.dart';
 import '../../widgets/avatar.dart';
 import 'message_bubble.dart' show formatBytes;
 
@@ -66,14 +67,23 @@ Future<void> showMediaViewer(
   required List<MediaItem> items,
   required int start,
   required ViewerActions actions,
+  bool protected = false,
 }) {
   return showGeneralDialog(
     context: context,
     barrierDismissible: false,
     barrierColor: Colors.transparent,
     transitionDuration: const Duration(milliseconds: 160),
-    pageBuilder: (_, _, _) =>
-        _MediaViewer(items: items, start: start, actions: actions),
+    // Private Chat Lock: screen guard on, no download or forward.
+    pageBuilder: (_, _, _) => PrivacyGuard(
+      enabled: protected,
+      child: _MediaViewer(
+        items: items,
+        start: start,
+        actions: actions,
+        protected: protected,
+      ),
+    ),
     transitionBuilder: (_, a, _, child) =>
         FadeTransition(opacity: a, child: child),
   );
@@ -84,8 +94,10 @@ class _MediaViewer extends StatefulWidget {
     required this.items,
     required this.start,
     required this.actions,
+    this.protected = false,
   });
 
+  final bool protected;
   final List<MediaItem> items;
   final int start;
   final ViewerActions actions;
@@ -277,17 +289,19 @@ class _MediaViewerState extends State<_MediaViewer> {
                       tip: 'React',
                       onTap: () => a.onReact(m, _below(_reactKey)),
                     ),
-                    _Tool(
-                      icon: Icons.shortcut_rounded,
-                      tip: 'Forward',
-                      onTap: () => a.onForward(m),
-                    ),
+                    if (!widget.protected)
+                      _Tool(
+                        icon: Icons.shortcut_rounded,
+                        tip: 'Forward',
+                        onTap: () => a.onForward(m),
+                      ),
                   ],
-                  _Tool(
-                    icon: Icons.download_rounded,
-                    tip: 'Download',
-                    onTap: _download,
-                  ),
+                  if (!widget.protected)
+                    _Tool(
+                      icon: Icons.download_rounded,
+                      tip: 'Download',
+                      onTap: _download,
+                    ),
                   const SizedBox(width: 6),
                   _Tool(icon: Icons.close_rounded, tip: 'Close', onTap: close),
                 ],

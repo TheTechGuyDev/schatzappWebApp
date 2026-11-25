@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../platform/call_bridge.dart';
 import '../demo_data.dart';
+import 'chat_repo.dart';
 
 enum CallPhase { idle, incoming, dialing, connecting, connected }
 
@@ -60,6 +61,10 @@ class CallService extends ChangeNotifier {
   /// Short messages for the call screen (errors, notices).
   final notice = ValueNotifier<String?>(null);
 
+  /// The ringing item is a Bimp (Private Chat Lock): it only gets
+  /// attention, and accepting it ends it at once. No voice, no video.
+  bool isBimp = false;
+
   Map<String, dynamic>? _incoming;
   StreamSubscription? _incomingSub;
   Timer? _poll;
@@ -101,8 +106,7 @@ class CallService extends ChangeNotifier {
     final ringingRow =
         c != null &&
         '${c['call_id'] ?? ''}'.isNotEmpty &&
-        c['status'] == 'ringing' &&
-        c['call_type'] != 'bimp';
+        c['status'] == 'ringing';
 
     if (!ringingRow) {
       // Answered on the phone, declined, or the caller hung up.
@@ -119,12 +123,38 @@ class CallService extends ChangeNotifier {
     callId = '${c['call_id']}';
     conversationId = c['conversation_id'] as String?;
     channel = c['agora_channel_name'] as String?;
+    isBimp = c['call_type'] == 'bimp';
     isVideo = c['call_type'] == 'video';
-    peerName = (c['caller_name'] as String?) ?? 'SchatzApp user';
-    peerAvatar = c['caller_avatar'] as String?;
+    peerName = isBimp
+        ? 'Unknown'
+        : ((c['caller_name'] as String?) ?? 'SchatzApp user');
+    peerAvatar = isBimp ? null : c['caller_avatar'] as String?;
     phase = CallPhase.incoming;
     notifyListeners();
     CallBridge.tone('ring');
+
+    if (isBimp) {
+      // A Bimp never shows who sent it: one of my camouflage profiles is
+      // shown instead (same as the phone).
+      try {
+        final r = await _sb.rpc('pcl_pick_camouflage');
+        final list = r is List ? r : [r];
+        if (list.isNotEmpty && list.first is Map) {
+          final m = Map<String, dynamic>.from(list.first as Map);
+          final n = '${m['out_name'] ?? ''}'.trim();
+          final a = '${m['out_avatar'] ?? ''}'.trim();
+          if (phase == CallPhase.incoming && isBimp) {
+            if (n.isNotEmpty) peerName = n;
+            peerAvatar = a.isEmpty ? null : a;
+            notifyListeners();
+          }
+        }
+      } catch (_) {}
+      try {
+        await _sb.rpc('ack_call_ringing', params: {'p_call_id': callId});
+      } catch (_) {}
+      return;
+    }
 
     // Show the name this user saved, like the phone does.
     final callerId = c['caller_id'] as String?;
@@ -154,6 +184,121 @@ class CallService extends ChangeNotifier {
   // Outgoing
   // -------------------------------------------------------------------------
 
+  /// Accepting or declining a Bimp just ends it (phone's _finishBimp).
+  Future<void> _finishBimp(String status) async {
+    final id = callId;
+    final me = _me;
+    _reset();
+    if (id == null || me == null) return;
+    try {
+      await _sb
+          .from('calls')
+          .update({
+            'status': status,
+            'ended_at': DateTime.now().toUtc().toIso8601String(),
+            'duration_seconds': 0,
+          })
+          .eq('id', id);
+    } catch (_) {}
+    try {
+      await _sb
+          .from('active_incoming_calls')
+          .delete()
+          .eq('call_id', id)
+          .eq('user_id', me);
+    } catch (_) {}
+  }
+
+  /// Sends a Bimp in a Private Chat Lock chat (same rows as the phone's
+  /// sendBimp). The other side rings; accepting ends it. Returns an error
+  /// message, or null.
+  Future<String?> sendBimp(DemoChat chat) async {
+    final me = _me;
+    if (me == null) return 'Sign in to send a Bimp.';
+    try {
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      final convo = await _sb
+          .from('conversations')
+          .select('type')
+          .eq('id', chat.id)
+          .maybeSingle();
+      final group = '${convo?['type'] ?? ''}' == 'group';
+      final parts = await _sb
+          .from('conversation_participants')
+          .select('user_id')
+          .eq('conversation_id', chat.id)
+          .neq('user_id', me)
+          .isFilter('left_at', null);
+      final callees = (parts as List)
+          .map((r) => '${r['user_id']}')
+          .toSet()
+          .toList();
+      if (callees.isEmpty) return 'There is no one to Bimp in this chat.';
+      final caller = await _sb
+          .from('profiles')
+          .select('full_name, avatar_url')
+          .eq('id', me)
+          .single();
+      final call = await _sb
+          .from('calls')
+          .insert({
+            'conversation_id': chat.id,
+            'caller_id': me,
+            'callee_id': group ? null : callees.first,
+            'is_group': group,
+            'caller_name': caller['full_name'],
+            'caller_avatar': caller['avatar_url'],
+            'call_type': 'bimp',
+            'status': 'ringing',
+            'started_at': nowIso,
+          })
+          .select()
+          .single();
+      final id = '${call['id']}';
+      final ch = 'bimp_${DateTime.now().millisecondsSinceEpoch}';
+      await _sb.from('active_incoming_calls').upsert([
+        for (final u in callees)
+          {
+            'user_id': u,
+            'call_id': id,
+            'conversation_id': chat.id,
+            'caller_id': me,
+            'caller_name': caller['full_name'],
+            'caller_avatar': caller['avatar_url'],
+            'call_type': 'bimp',
+            'status': 'ringing',
+            'agora_channel_name': ch,
+            'updated_at': nowIso,
+          },
+      ]);
+      try {
+        await _sb.from('messages').insert({
+          'conversation_id': chat.id,
+          'sender_id': me,
+          'message_type': 'call',
+          'content': 'bimp:sent',
+        });
+      } catch (_) {}
+      // Nobody answered in 40 seconds: missed, stop ringing.
+      Timer(const Duration(seconds: 40), () async {
+        try {
+          final row = await _sb
+              .from('calls')
+              .select('status')
+              .eq('id', id)
+              .maybeSingle();
+          if (row != null && row['status'] == 'ringing') {
+            await _sb.from('calls').update({'status': 'missed'}).eq('id', id);
+            await _sb.from('active_incoming_calls').delete().eq('call_id', id);
+          }
+        } catch (_) {}
+      });
+      return null;
+    } catch (_) {
+      return 'Could not send Bimp';
+    }
+  }
+
   /// Starts a call from a chat. Returns an error message, or null.
   Future<String?> call(DemoChat chat, {required bool video}) async {
     final me = _me;
@@ -163,14 +308,9 @@ class CallService extends ChangeNotifier {
     }
     final type = video ? 'video' : 'voice';
     try {
-      final locked = await _sb
-          .from('conversation_participants')
-          .select('user_id')
-          .eq('conversation_id', chat.id)
-          .eq('private_lock', true)
-          .isFilter('left_at', null)
-          .limit(1);
-      if ((locked as List).isNotEmpty) {
+      // Private Chat Lock (locked chat or private group): Bimp only. The
+      // server rejects these calls too.
+      if (await ChatRepo.instance.isRestricted(chat.id)) {
         return 'Calls are disabled in a Private Chat Lock chat';
       }
 
@@ -295,6 +435,10 @@ class CallService extends ChangeNotifier {
     final me = _me;
     if (c == null || me == null || phase != CallPhase.incoming) return null;
     CallBridge.tone('stop');
+    if (isBimp) {
+      await _finishBimp('ended');
+      return 'Bimp received';
+    }
     final id = callId!;
     final ch = channel;
     if (ch == null) {
@@ -359,6 +503,11 @@ class CallService extends ChangeNotifier {
   }
 
   Future<void> decline() async {
+    if (isBimp) {
+      CallBridge.tone('stop');
+      await _finishBimp('declined');
+      return;
+    }
     final id = callId;
     final me = _me;
     CallBridge.tone('stop');
@@ -791,6 +940,7 @@ class CallService extends ChangeNotifier {
     conversationId = null;
     channel = null;
     _incoming = null;
+    isBimp = false;
     _uid = null;
     _dialStart = null;
     ringing = false;

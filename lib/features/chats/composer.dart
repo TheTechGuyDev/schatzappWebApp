@@ -29,7 +29,11 @@ class ChatComposer extends StatefulWidget {
     this.replyTo,
     this.replyName,
     this.onCancelReply,
+    this.restricted = false,
   });
+
+  /// Private Chat Lock: only pictures and videos can be attached.
+  final bool restricted;
 
   /// Message being replied to (shown above the field).
   final DemoMessage? replyTo;
@@ -421,12 +425,14 @@ class _ChatComposerState extends State<ChatComposer> {
       alignmentOffset: const Offset(0, -8),
       style: _menuStyle,
       menuChildren: [
-        _AttachItem(
-          icon: Icons.description_rounded,
-          color: const Color(0xFF7B2FE0),
-          label: 'Document',
-          onTap: _pickDocument,
-        ),
+        // Private Chat Lock: pictures and videos only.
+        if (!widget.restricted)
+          _AttachItem(
+            icon: Icons.description_rounded,
+            color: const Color(0xFF7B2FE0),
+            label: 'Document',
+            onTap: _pickDocument,
+          ),
         _AttachItem(
           icon: Icons.photo_library_rounded,
           color: const Color(0xFF1FB5A3),
@@ -439,12 +445,13 @@ class _ChatComposerState extends State<ChatComposer> {
           label: 'Camera',
           onTap: _openCamera,
         ),
-        _AttachItem(
-          icon: Icons.headphones_rounded,
-          color: const Color(0xFFF08A24),
-          label: 'Audio',
-          onTap: _pickAudio,
-        ),
+        if (!widget.restricted)
+          _AttachItem(
+            icon: Icons.headphones_rounded,
+            color: const Color(0xFFF08A24),
+            label: 'Audio',
+            onTap: _pickAudio,
+          ),
       ],
       builder: (context, c, _) => _CircleIcon(
         tooltip: 'Attach',

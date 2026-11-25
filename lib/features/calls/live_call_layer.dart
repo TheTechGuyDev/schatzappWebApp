@@ -140,13 +140,19 @@ class _IncomingCard extends StatelessWidget {
                       Row(
                         children: [
                           Icon(
-                            c.isVideo ? Icons.videocam_rounded : Icons.call,
+                            c.isBimp
+                                ? Icons.notifications_active_rounded
+                                : (c.isVideo
+                                      ? Icons.videocam_rounded
+                                      : Icons.call),
                             size: 16,
                             color: AppColors.accent,
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            c.isVideo
+                            c.isBimp
+                                ? 'Bimp'
+                                : c.isVideo
                                 ? 'Incoming video call'
                                 : 'Incoming voice call',
                             style: const TextStyle(
@@ -176,7 +182,9 @@ class _IncomingCard extends StatelessWidget {
                 Expanded(
                   child: _PillButton(
                     label: 'Accept',
-                    icon: c.isVideo ? Icons.videocam_rounded : Icons.call,
+                    icon: c.isBimp
+                        ? Icons.notifications_active_rounded
+                        : (c.isVideo ? Icons.videocam_rounded : Icons.call),
                     color: AppColors.online,
                     onTap: () async {
                       final err = await CallService.instance.accept();

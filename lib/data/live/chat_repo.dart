@@ -356,6 +356,77 @@ class ChatRepo extends ChangeNotifier {
     }
   }
 
+  /// Private Chat Lock rules apply: someone locked the chat, or it is a
+  /// private group. No calls (Bimp only), photos and videos only.
+  Future<bool> isRestricted(String conversationId) async {
+    if (await isPrivateLocked(conversationId)) return true;
+    try {
+      final r = await _sb
+          .from('conversations')
+          .select('is_private_group')
+          .eq('id', conversationId)
+          .maybeSingle();
+      return r?['is_private_group'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Turns a normal group into a private group (creator or admin only;
+  /// the server checks). Same RPC as the phone.
+  Future<void> convertGroupToPrivate(String conversationId) async {
+    await _sb.rpc(
+      'convert_group_to_private',
+      params: {'p_conversation_id': conversationId},
+    );
+  }
+
+  /// Removes a group from Private Chat Lock (creator or admin only; the
+  /// server checks and deletes what the rules say).
+  Future<void> removePrivateGroup(String conversationId) async {
+    await _sb.rpc(
+      'remove_private_group',
+      params: {'p_conversation_id': conversationId},
+    );
+  }
+
+  /// 'converted' when a normal group was turned private, otherwise the
+  /// group was created inside Private Chats.
+  Future<bool> isConvertedPrivateGroup(String conversationId) async {
+    try {
+      final r = await _sb
+          .from('conversations')
+          .select('private_origin')
+          .eq('id', conversationId)
+          .maybeSingle();
+      return r?['private_origin'] == 'converted';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// People I have a locked chat with (hidden from normal contact lists).
+  Future<Set<String>> lockedPeers() async {
+    try {
+      final raw = await _sb.rpc('pcl_locked_peers');
+      return {for (final x in (raw as List)) x.toString()};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Contacts for the normal (not private) pickers: people I have a locked
+  /// chat with are left out, like the phone.
+  Future<List<DemoContact>> normalContacts({bool force = false}) async {
+    final all = await contacts(force: force);
+    final locked = await lockedPeers();
+    if (locked.isEmpty) return all;
+    return [
+      for (final c in all)
+        if (!locked.contains(c.userId)) c,
+    ];
+  }
+
   /// My own lock state for a chat (phone's isMyPrivateLock).
   Future<bool> isMyPrivateLock(String conversationId) async {
     try {

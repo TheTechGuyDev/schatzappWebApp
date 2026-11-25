@@ -227,6 +227,80 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
     }
   }
 
+  /// Group Type switch (creator/admin): convert a normal group into a
+  /// private group, or remove it from Private Chat Lock. The server checks
+  /// who is allowed and deletes what the rules say.
+  Future<void> _toggleGroupPrivate(bool to) async {
+    if (_lockBusy) return;
+    setState(() => _lockBusy = true);
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => PasswordGateDialog(verify: _repo.verifyAppPassword),
+      );
+      if (ok != true || !mounted) return;
+      final id = widget.chat.id;
+      if (to) {
+        await _repo.convertGroupToPrivate(id);
+        if (!mounted) return;
+        _toast('Group moved to Private Chats.');
+        widget.onLockChanged?.call(true);
+        await _load();
+        return;
+      }
+      final converted = await _repo.isConvertedPrivateGroup(id);
+      if (!mounted) return;
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          title: const Text('Remove from Private Chat Lock'),
+          content: Text(
+            converted
+                ? 'Removing this group from Private Chat Lock will permanently '
+                      'delete all messages exchanged while the group was in '
+                      'Private Chat Lock. This action cannot be undone.'
+                : 'Removing this group from Private Chat Lock will permanently '
+                      'delete the group and its messages. This action cannot '
+                      'be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: TextButton.styleFrom(foregroundColor: AppColors.missed),
+              child: const Text('Remove'),
+            ),
+          ],
+        ),
+      );
+      if (sure != true || !mounted) return;
+      await _repo.removePrivateGroup(id);
+      if (!mounted) return;
+      if (converted) {
+        _toast('Group is back in your chats.');
+        widget.onLockChanged?.call(false);
+        await _load();
+      } else {
+        _toast('Group deleted.');
+        await _repo.refresh();
+        widget.onChatRemoved?.call();
+      }
+    } catch (_) {
+      _toast(
+        to
+            ? 'Could not convert the group'
+            : 'Could not remove the group from Private Chat Lock',
+      );
+    } finally {
+      if (mounted) setState(() => _lockBusy = false);
+    }
+  }
+
   /// Lock Chat switch: the app password is asked first (like the phone),
   /// then set_private_lock moves the chat in or out of Private Chats.
   Future<void> _toggleLock(bool to) async {
@@ -610,6 +684,29 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                   ),
                 ),
               const SizedBox(height: 14),
+
+              // Group Type: creator/admin can make the group private or
+              // remove it from Private Chat Lock (same as the phone).
+              if (group && live && (i?.iAmAdmin ?? false))
+                _Row(
+                  icon: Icons.lock_outline_sharp,
+                  title: 'Group Type',
+                  subtitle: privateGroup
+                      ? 'Private Chat Lock group'
+                      : 'Convert to Private Chat Lock',
+                  onTap: () => _toggleGroupPrivate(!privateGroup),
+                  trailing: Switch(
+                    value: privateGroup,
+                    onChanged: _lockBusy ? null : _toggleGroupPrivate,
+                    activeThumbColor: Colors.white,
+                    activeTrackColor: AppColors.accent,
+                    inactiveThumbColor: Colors.white,
+                    inactiveTrackColor: const Color(0xFFD5D9DE),
+                    trackOutlineColor: const WidgetStatePropertyAll(
+                      Colors.transparent,
+                    ),
+                  ),
+                ),
 
               // Lock Chat (one-to-one chats, same as the phone)
               if (!group)
