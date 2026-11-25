@@ -66,6 +66,9 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
   bool _loading = false;
   bool _demoMuted = false;
   late bool _locked = widget.chat.isLocked;
+
+  /// Anyone in the chat has it locked: hide the action buttons (phone).
+  late bool _anyLocked = widget.chat.isLocked;
   bool _lockBusy = false;
 
   @override
@@ -80,6 +83,9 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
       if (!widget.chat.isGroup) {
         _repo.isMyPrivateLock(widget.chat.id).then((v) {
           if (mounted && !_lockBusy) setState(() => _locked = v);
+        });
+        _repo.isPrivateLocked(widget.chat.id).then((v) {
+          if (mounted && !_lockBusy) setState(() => _anyLocked = v);
         });
       }
       final i = await ChatInfo.load(widget.chat);
@@ -235,8 +241,14 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
       );
       if (ok != true || !mounted) return;
       if (widget.live) await _repo.setPrivateLock(widget.chat.id, to);
+      final any = to || !widget.live
+          ? to
+          : await _repo.isPrivateLocked(widget.chat.id);
       if (!mounted) return;
-      setState(() => _locked = to);
+      setState(() {
+        _locked = to;
+        _anyLocked = any;
+      });
       _toast(
         to
             ? 'Chat locked. It is now in Private Chats.'
@@ -534,56 +546,57 @@ class _ContactInfoPanelState extends State<ContactInfoPanel> {
                 ),
               const SizedBox(height: 16),
 
-              // Actions
-              Row(
-                children: [
-                  _ActionCard(
-                    icon: Icons.chat_bubble_outline_rounded,
-                    label: 'Message',
-                    onTap: widget.onMessage,
-                  ),
-                  if (!privateGroup && !blocked) ...[
+              // Actions (hidden for private chats, like the phone)
+              if (!_anyLocked)
+                Row(
+                  children: [
                     _ActionCard(
-                      icon: Icons.call,
-                      label: 'Voice Call',
-                      onTap: () => widget.onCall(false),
+                      icon: Icons.chat_bubble_outline_rounded,
+                      label: 'Message',
+                      onTap: widget.onMessage,
                     ),
-                    _ActionCard(
-                      icon: Icons.videocam,
-                      label: 'Video Call',
-                      onTap: () => widget.onCall(true),
+                    if (!privateGroup && !blocked) ...[
+                      _ActionCard(
+                        icon: Icons.call,
+                        label: 'Voice Call',
+                        onTap: () => widget.onCall(false),
+                      ),
+                      _ActionCard(
+                        icon: Icons.videocam,
+                        label: 'Video Call',
+                        onTap: () => widget.onCall(true),
+                      ),
+                    ],
+                    Expanded(
+                      child: PopupMenuButton<_More>(
+                        tooltip: 'More',
+                        position: PopupMenuPosition.under,
+                        color: Colors.white,
+                        surfaceTintColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        onSelected: _onMore,
+                        itemBuilder: (_) => [
+                          _check(_More.mute, 'Mute notifications', muted),
+                          const PopupMenuDivider(),
+                          _plain(_More.clear, 'Clear chat'),
+                          if (group)
+                            _danger(_More.exitGroup, 'Exit group')
+                          else
+                            blocked
+                                ? _plain(_More.block, 'Unblock $name')
+                                : _danger(_More.block, 'Block $name'),
+                          _danger(_More.delete, 'Delete chat'),
+                        ],
+                        child: const _ActionCardBody(
+                          icon: Icons.more_horiz,
+                          label: 'More',
+                        ),
+                      ),
                     ),
                   ],
-                  Expanded(
-                    child: PopupMenuButton<_More>(
-                      tooltip: 'More',
-                      position: PopupMenuPosition.under,
-                      color: Colors.white,
-                      surfaceTintColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      onSelected: _onMore,
-                      itemBuilder: (_) => [
-                        _check(_More.mute, 'Mute notifications', muted),
-                        const PopupMenuDivider(),
-                        _plain(_More.clear, 'Clear chat'),
-                        if (group)
-                          _danger(_More.exitGroup, 'Exit group')
-                        else
-                          blocked
-                              ? _plain(_More.block, 'Unblock $name')
-                              : _danger(_More.block, 'Block $name'),
-                        _danger(_More.delete, 'Delete chat'),
-                      ],
-                      child: const _ActionCardBody(
-                        icon: Icons.more_horiz,
-                        label: 'More',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
               if (blocked)
                 Padding(
                   padding: const EdgeInsets.only(top: 10),

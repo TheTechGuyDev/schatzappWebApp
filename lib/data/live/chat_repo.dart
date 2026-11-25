@@ -339,6 +339,23 @@ class ChatRepo extends ChangeNotifier {
     );
   }
 
+  /// True when anyone in the chat has it locked (phone's isPrivateLocked).
+  /// The phone hides Message / Voice Call / Video Call / More for these.
+  Future<bool> isPrivateLocked(String conversationId) async {
+    try {
+      final r = await _sb
+          .from('conversation_participants')
+          .select('user_id')
+          .eq('conversation_id', conversationId)
+          .eq('private_lock', true)
+          .isFilter('left_at', null)
+          .limit(1);
+      return (r as List).isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// My own lock state for a chat (phone's isMyPrivateLock).
   Future<bool> isMyPrivateLock(String conversationId) async {
     try {
